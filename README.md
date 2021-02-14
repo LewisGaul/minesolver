@@ -1,0 +1,3 @@
+# Minesolver
+
+A minesweeper solver.
