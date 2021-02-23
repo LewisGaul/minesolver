@@ -1,10 +1,10 @@
 __all__ = ("Board", "CellContents", "Coord", "Grid")
 
 import copy
-from typing import (Any, Callable, Collection, Generic, Iterable, Tuple, Type,
-                    TypeVar)
+from typing import Any, Callable, Collection, Generic, Iterable, Tuple, Type, TypeVar
 
 import adt
+
 
 Coord = Tuple[int, int]
 

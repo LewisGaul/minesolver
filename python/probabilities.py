@@ -10,9 +10,8 @@ import subprocess
 
 import cffi
 
-from ..core.board import Board
-from ..shared.types import CellContents
-from ..shared.utils import Grid
+from .utils import Board, CellContents, Grid
+
 
 rust_project_path = pathlib.Path(__file__).resolve().parent.parent / "rust" / "solver"
 header_path = rust_project_path / "include" / "solver.h"
@@ -53,12 +52,12 @@ class SolverFFI(cffi.FFI):
         number_names = {1: "one", 2: "two", 3: "three"}
         for i, coord in enumerate(board.coords):
             val = board[coord]
-            if isinstance(val, CellContents.Num) and 0 <= val.num <= 8:
+            if isinstance(val, CellContents.Num) and 0 <= val[0] <= 8:
                 cells[i] = val.num
             elif val.is_mine_type() and 1 <= val.num <= 3:
                 enum_name = "SOLVER_CELL_{}_MINE".format(number_names[val.num].upper())
                 cells[i] = getattr(self.lib, enum_name)
-            elif val is CellContents.Unclicked:
+            elif val == CellContents.Unclicked():
                 cells[i] = self.lib.SOLVER_CELL_UNCLICKED
             else:
                 raise ValueError(f"Unsupported board cell contents: {val}")

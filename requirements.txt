@@ -1,0 +1,6 @@
+git+https://github.com/LewisGaul/python_adt
+cffi
+numpy
+pytest
+scipy
+sympy

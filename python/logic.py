@@ -19,6 +19,7 @@ from .gen_probs import log_combs as get_log_combs
 from .gen_probs import prob as get_unsafe_prob
 from .utils import Board, CellContents, Coord, Grid
 
+
 _debug = os.environ.get("SOLVER_DEBUG")
 logger = logging.getLogger(__name__)
 

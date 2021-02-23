@@ -11,6 +11,7 @@ from python import logic
 from python.logic import Config_T
 from python.utils import Board, Coord, Grid
 
+
 logger = logging.getLogger(__name__)
 
 
