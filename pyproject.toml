@@ -3,7 +3,7 @@
 [build-system]
 # Minimum requirements for the build system to execute.
 requires = [
-    "setuptools >= 40",
+    "setuptools >= 42",
     "wheel",
 ]
 build-backend = "setuptools.build_meta"
@@ -55,21 +55,3 @@ markers = [
 python_files = "*test.py"
 python_classes = "*Tests, *Test"
 python_functions = "test_*"
-
-
-# COVERAGE
-# --------
-[tool.coverage.run]
-omit = [
-    "*venv*/**"
-]
-
-[tool.coverage.report]
-omit = []
-exclude_lines = [
-    "pass",
-    "if __name__ == .__main__.:",
-    "return NotImplemented",
-    "raise NotImplementedError",
-]
-precision = 1

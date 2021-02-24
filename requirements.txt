@@ -1,4 +1,4 @@
-git+https://github.com/LewisGaul/python_adt
+adt @ git+https://github.com/LewisGaul/python_adt@v0.0.1
 cffi
 numpy
 pytest
