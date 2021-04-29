@@ -119,10 +119,10 @@ class Grid(Generic[T]):
         cell_size = max(len(repr(obj)) for obj in self.values)
         cell_size = min(cell_size, 10)
 
-        cell = f"{{!r:>{cell_size}}}"
+        cell = f"{{:>{cell_size}}}"
         lines = []
         for row in self.rows:
-            reprs = (cell.format(obj[:cell_size]) for obj in row)
+            reprs = (cell.format(repr(obj)[:cell_size]) for obj in row)
             lines.append(" ".join(reprs))
         return "\n".join(lines)
 
@@ -300,7 +300,7 @@ class Board(Grid[CellContents]):
 
     def __str__(self):
         repr_grid = Grid.from_grid(self)
-        repr_grid.map(CellContents.to_string)
+        repr_grid.map(lambda x: x.to_string())
         return str(repr_grid).replace("'", "")
 
     @classmethod
