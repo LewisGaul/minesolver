@@ -4,3 +4,6 @@ build/
 dist/
 target/
 __pycache__/
+.vscode/
+zig-cache/
+zig-out/
