@@ -1,6 +1,6 @@
 # Solver Design
 
-This document contains an implementation-level design of the Minegauler solver package.
+This document contains an implementation-level design of this minesweeper solver.
 
 
 ## Probability Calculation
@@ -46,7 +46,9 @@ type ProbabilityGrid = Grid<f32>;
 
 The first step in the process is to reduce the board into a structure that can be worked with more easily. We create a new type to represent this restructured data, which has been decomposed from grid form.
 
-\[Note: We're actually skipping an optional step here of reducing the board by applying solver logic, e.g. if a number '1' is only next to one unclicked cell.\]
+[TODO: This process makes sense to be performed using matrix reduction.]
+
+[Note: We're actually skipping an optional step here of reducing the board by applying solver logic, e.g. if a number '1' is only next to one unclicked cell.]
 
 ```rust
 struct DecomposedBoard {
@@ -109,7 +111,7 @@ fn decompose_board(board: &Board) -> DecomposedBoard {
 ```
 
 
-Now the most complex (and compuatationally slow) step - we need to take this reduced representation and find all possible ways to place mines in the equivalence groups of unclicked cells.
+Now the most complex (and compuatationally intensive) step - we need to take this reduced representation and find all possible ways to place mines in the equivalence groups of unclicked cells.
 
 ```rust
 struct Combinations {
@@ -154,7 +156,7 @@ fn find_combinations(board: DecomposedBoard) -> Combinations {
      * Combinations: [
      *   (0, 2, 0, 0, 1, 1, 2),
      *   (0, 2, 0, 1, 1, 0, 3),
-     *   (0, 2, 1, 0, 0, 1, 3),   # shown above
+     *   (0, 2, 1, 0, 0, 1, 3),   #  <- this one shown above
      *   (0, 2, 1, 1, 0, 0, 4),
      *   (1, 1, 0, 0, 2, 0, 2),
      *   (1, 1, 1, 0, 1, 0, 3),
@@ -178,8 +180,8 @@ fn find_combinations(board: DecomposedBoard) -> Combinations {
      *
      * This can alternatively be written as the matrix equation:
      *  |1, 1, 0, 0, 0, 0, 0|        |2|
-     *  |0, 1, 1, 0, 1, 0, 0|        |3|
-     *  |0, 0, 1, 1, 1, 1, 0|  x g = |2|
+     *  |0, 1, 1, 0, 1, 0, 0|  . g = |3|
+     *  |0, 0, 1, 1, 1, 1, 0|    ~   |2|
      *  |0, 0, 0, 0, 1, 1, 1|        |4|
      *
      * Reducing these equations down gives:
