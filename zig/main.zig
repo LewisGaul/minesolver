@@ -75,6 +75,24 @@ fn Grid(comptime T: type) type {
 
         const Self = @This();
 
+        const Iterator = struct {
+            grid: Self,
+            idx: u8 = 0,
+
+            const Entry = struct { x: u8, y: u8, value: T };
+
+            pub fn next(it: *@This()) ?Entry {
+                if (it.idx >= it.grid.x_size * it.grid.y_size) return null;
+                const entry = Entry{
+                    .x = it.idx % it.grid.y_size,
+                    .y = @divFloor(it.idx, it.grid.y_size),
+                    .value = it.grid.cells[it.idx],
+                };
+                it.idx += 1;
+                return entry;
+            }
+        };
+
         /// Memory owned by callee, i.e. ensure the slice of cells will live
         /// for long enough!
         pub fn init(x_size: u8, y_size: u8, cells: []T) !Self {
@@ -96,6 +114,10 @@ fn Grid(comptime T: type) type {
                 try writer.print("{} ", .{c});
             }
             return buf.toOwnedSlice();
+        }
+
+        pub fn iterator(g: Self) Iterator {
+            return .{ .grid = g };
         }
     };
 }
