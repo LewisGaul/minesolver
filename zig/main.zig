@@ -29,6 +29,8 @@ const stderr = std.io.getStdErr().writer();
 
 const Args = struct {
     input_file: File,
+    mines: u8,
+    per_cell: u8 = 1,
 };
 
 const CellContents = union(enum) {
@@ -184,7 +186,9 @@ fn parseArgs() !Args {
     // We can use 'parseParam()' to parse a string to a 'Param(Help)'.
     const params = comptime [_]clap.Param(clap.Help){
         clap.parseParam("-h, --help           Display this help and exit") catch unreachable,
+        clap.parseParam("<MINES>              Number of mines") catch unreachable,
         clap.parseParam("-f, --file <PATH>    Input file (defaults to stdin)") catch unreachable,
+        clap.parseParam("--per-cell <NUM>     Max number of mines per cell") catch unreachable,
     };
 
     // Initalize diagnostics for reporting parsing errors.
@@ -203,6 +207,11 @@ fn parseArgs() !Args {
         std.process.exit(0);
     }
 
+    if (clap_args.positionals().len != 1) {
+        try stderr.writeAll("Expected exactly one positional arg\n");
+        return error.InvalidArgument;
+    }
+
     const input_file = blk: {
         if (clap_args.option("--file")) |file| {
             break :blk std.fs.cwd().openFile(file, .{}) catch |err| {
@@ -212,7 +221,24 @@ fn parseArgs() !Args {
         } else break :blk std.io.getStdIn();
     };
 
-    return Args{ .input_file = input_file };
+    const mines_arg = clap_args.positionals()[0];
+    const mines = try std.fmt.parseUnsigned(u8, mines_arg, 10);
+    if (mines == 0) {
+        try stderr.writeAll("Number of mines must be greater than 0\n");
+        return error.InvalidArgument;
+    }
+
+    var args = Args{ .input_file = input_file, .mines = mines };
+
+    if (clap_args.option("--per-cell")) |per_cell| {
+        args.per_cell = try std.fmt.parseUnsigned(u8, per_cell, 10);
+        if (args.per_cell == 0) {
+            try stderr.writeAll("Max number of mines per cell must be greater than 0\n");
+            return error.InvalidArgument;
+        }
+    }
+
+    return args;
 }
 
 pub fn main() !u8 {
