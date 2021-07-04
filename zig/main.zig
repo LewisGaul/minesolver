@@ -6,6 +6,7 @@
 //  - Cells in a row are separated by any number of spaces or tabs
 //  - A hash symbol (#) represents an unclicked cell
 //  - Numbers represent numbers shown on the board
+//  - A dot (.) can be used in place of a number 0
 //  - An asterisk (*) represents a mine, and may optionally be followed by a
 //    number to indicate the number of mines (1 assumed otherwise)
 //
@@ -14,6 +15,7 @@ const std = @import("std");
 
 const clap = @import("clap");
 
+const ArrayList = std.ArrayList;
 const File = std.fs.File;
 const Allocator = std.mem.Allocator;
 
@@ -33,6 +35,31 @@ const CellContents = union(enum) {
     Unclicked,
     Num: u8,
     Mine: u8,
+
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        switch (self) {
+            .Unclicked => try writer.writeByte('#'),
+            .Num => |n| {
+                if (n == 0) {
+                    try writer.writeByte('.');
+                } else {
+                    try writer.print("{}", .{n});
+                }
+            },
+            .Mine => |n| {
+                if (n == 1) {
+                    try writer.writeByte('*');
+                } else {
+                    try writer.print("*{}", .{n});
+                }
+            },
+        }
+    }
 };
 
 /// Generic square grid type.
@@ -48,18 +75,27 @@ fn Grid(comptime T: type) type {
 
         const Self = @This();
 
-        pub fn init(gpa: *Allocator, x_size: u8, y_size: u8, cells: []T) !Self {
+        /// Memory owned by callee, i.e. ensure the slice of cells will live
+        /// for long enough!
+        pub fn init(x_size: u8, y_size: u8, cells: []T) !Self {
             if (cells.len != x_size * y_size) return error.InvalidNumberOfCells;
-            return Self{
-                .x_size = x_size,
-                .y_size = y_size,
-                .cells = try gpa.dupe(T, cells),
-            };
+            return Self{ .x_size = x_size, .y_size = y_size, .cells = cells };
         }
 
         pub fn get(g: Self, x: u8, y: u8) !T {
             if (x >= g.x_size or y >= g.y_size) return error.OutOfBounds;
             return g.cells[y * g.x_size + x];
+        }
+
+        pub fn toStr(g: Self) ![]const u8 {
+            var buf = ArrayList(u8).init(allocator);
+            errdefer buf.deinit();
+            var writer = buf.writer();
+            for (g.cells) |c, i| {
+                if (i > 0 and i % g.x_size == 0) try writer.writeByte('\n');
+                try writer.print("{} ", .{c});
+            }
+            return buf.toOwnedSlice();
         }
     };
 }
@@ -70,8 +106,55 @@ const Board = Grid(CellContents);
 // Main
 // -----------------------------------------------------------------------------
 
+fn parseInputCell(input: []const u8) !CellContents {
+    switch (input[0]) {
+        '0'...'9' => return CellContents{
+            .Num = try std.fmt.parseUnsigned(u8, input, 10),
+        },
+        '.' => {
+            if (input.len > 1) return error.UnexpectedCellText;
+            return CellContents{ .Num = 0 };
+        },
+        '#' => {
+            if (input.len > 1) return error.UnexpectedCellText;
+            return CellContents.Unclicked;
+        },
+        '*' => {
+            if (input.len == 1) return CellContents{ .Mine = 1 };
+            if (input[1] == '0') return error.UnexpectedCellText;
+            return CellContents{ .Mine = try std.fmt.parseUnsigned(u8, input[1..], 10) };
+        },
+        else => return error.UnexpectedCellText,
+    }
+}
+
 fn parseInputBoard(input: []const u8) !Board {
-    return Board.init(allocator, 0, 0, &.{});
+    var cells_array = ArrayList(CellContents).init(allocator);
+    errdefer cells_array.deinit();
+
+    var rows: u8 = 0;
+    var first_line_cols: ?u8 = null;
+    var lines_iter = std.mem.tokenize(input, "\r\n");
+    while (lines_iter.next()) |line| {
+        var cells_iter = std.mem.tokenize(line, " \t");
+        var cols: u8 = 0;
+        while (cells_iter.next()) |cell| {
+            try cells_array.append(try parseInputCell(cell));
+            cols += 1;
+        }
+        if (cols == 0) {
+            // Ignore blank lines.
+            continue;
+        } else if (first_line_cols == null) {
+            first_line_cols = cols;
+        } else if (cols != first_line_cols) {
+            return error.InconsistentGridShape;
+        }
+        rows += 1;
+    }
+    if (first_line_cols == null) return error.EmptyInput;
+
+    return Board.init(first_line_cols.?, rows, cells_array.toOwnedSlice());
 }
 
 fn parseArgs() !Args {
@@ -139,6 +222,7 @@ pub fn main() !u8 {
         },
     };
     const board = try parseInputBoard(input);
+    std.debug.print("{s}\n", .{try board.toStr()});
 
     return 0;
 }
