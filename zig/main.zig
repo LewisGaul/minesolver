@@ -35,7 +35,7 @@ const Args = struct {
 
 const CellContents = union(enum) {
     Unclicked,
-    Num: u8,
+    Number: u8,
     Mine: u8,
 
     pub fn format(
@@ -46,7 +46,7 @@ const CellContents = union(enum) {
     ) !void {
         switch (self) {
             .Unclicked => try writer.writeByte('#'),
-            .Num => |n| {
+            .Number => |n| {
                 if (n == 0) {
                     try writer.writeByte('.');
                 } else {
@@ -71,49 +71,74 @@ const CellContents = union(enum) {
 ///   4 5 6 7
 fn Grid(comptime T: type) type {
     return struct {
-        x_size: u8,
-        y_size: u8,
-        cells: []T,
+        /// Non-empty square slice of slices.
+        data: [][]T,
 
         const Self = @This();
 
+        /// Iterator for iterating over cells in index order.
         const Iterator = struct {
-            grid: Self,
+            grid: Grid,
             idx: u8 = 0,
 
             const Entry = struct { x: u8, y: u8, value: T };
 
             pub fn next(it: *@This()) ?Entry {
-                if (it.idx >= it.grid.x_size * it.grid.y_size) return null;
+                if (it.idx >= it.grid.xSize() * it.grid.ySize()) return null;
+                const x = it.idx % it.grid.ySize();
+                const y = @divFloor(it.idx, it.grid.ySize());
                 const entry = Entry{
-                    .x = it.idx % it.grid.y_size,
-                    .y = @divFloor(it.idx, it.grid.y_size),
-                    .value = it.grid.cells[it.idx],
+                    .x = x,
+                    .y = y,
+                    .value = it.grid.get(x, y) catch unreachable,
                 };
                 it.idx += 1;
                 return entry;
             }
         };
 
-        /// Memory owned by callee, i.e. ensure the slice of cells will live
-        /// for long enough!
-        pub fn init(x_size: u8, y_size: u8, cells: []T) !Self {
-            if (cells.len != x_size * y_size) return error.InvalidNumberOfCells;
-            return Self{ .x_size = x_size, .y_size = y_size, .cells = cells };
+        /// Allocates memory, but also reuses the provided memory storing the
+        /// 'cells' slice, which must all be managed by caller.
+        pub fn fromFlatSlice(x_size: u8, y_size: u8, cells: []T) !Self {
+            if (cells.len != x_size * y_size or cells.len == 0) return error.InvalidNumberOfCells;
+            const rows: [][]T = try allocator.alloc([]T, y_size);
+            var y: u8 = 0;
+            while (y < y_size) : (y += 1) {
+                rows[y] = cells[y * x_size .. (y + 1) * x_size];
+            }
+            return Self{ .data = rows };
+        }
+
+        pub fn xSize(g: Self) u8 {
+            return g.data[0].len;
+        }
+
+        pub fn ySize(g: Self) u8 {
+            return g.data.len;
         }
 
         pub fn get(g: Self, x: u8, y: u8) !T {
-            if (x >= g.x_size or y >= g.y_size) return error.OutOfBounds;
-            return g.cells[y * g.x_size + x];
+            if (x >= g.xSize() or y >= g.ySize()) return error.OutOfBounds;
+            return g.data[y][x];
+        }
+
+        pub fn count(g: Self, item: T) usize {
+            var total: usize = 0;
+            for (g.data) |row| {
+                total += std.mem.count(T, row, &.{item});
+            }
+            return total;
         }
 
         pub fn toStr(g: Self) ![]const u8 {
             var buf = ArrayList(u8).init(allocator);
             errdefer buf.deinit();
             var writer = buf.writer();
-            for (g.cells) |c, i| {
-                if (i > 0 and i % g.x_size == 0) try writer.writeByte('\n');
-                try writer.print("{} ", .{c});
+            for (g.data) |row, y| {
+                if (y > 0) try writer.writeByte('\n');
+                for (row) |cell| {
+                    try writer.print("{} ", .{cell});
+                }
             }
             return buf.toOwnedSlice();
         }
@@ -125,19 +150,40 @@ fn Grid(comptime T: type) type {
 }
 
 const Board = Grid(CellContents);
+const Matrix = Grid(u8);
 
 // -----------------------------------------------------------------------------
-// Main
+// Matrix board representation
+// -----------------------------------------------------------------------------
+
+/// Convert a board into a set of simultaneous equations, represented in matrix
+/// form. The memory is owned by the caller.
+fn boardToMatrix(board: Board) !Matrix {
+    const unclicked_cells = 10;
+    // const unclicked_cells = board.count(CellContents.Unclicked); TODO
+    const number_cells = 5;
+    // const number_cells = board.count(CellContents.Number); TODO
+    const rows: [][]u8 = try allocator.alloc([]u8, number_cells);
+    const all_matrix_cells: []u8 = try allocator.alloc(u8, unclicked_cells * number_cells);
+    var y: u8 = 0;
+    while (y < number_cells) : (y += 1) {
+        rows[y] = all_matrix_cells[y * unclicked_cells .. (y + 1) * unclicked_cells];
+    }
+    return Matrix{ .data = rows };
+}
+
+// -----------------------------------------------------------------------------
+// Input parsing
 // -----------------------------------------------------------------------------
 
 fn parseInputCell(input: []const u8) !CellContents {
     switch (input[0]) {
         '0'...'9' => return CellContents{
-            .Num = try std.fmt.parseUnsigned(u8, input, 10),
+            .Number = try std.fmt.parseUnsigned(u8, input, 10),
         },
         '.' => {
             if (input.len > 1) return error.UnexpectedCellText;
-            return CellContents{ .Num = 0 };
+            return CellContents{ .Number = 0 };
         },
         '#' => {
             if (input.len > 1) return error.UnexpectedCellText;
@@ -178,8 +224,12 @@ fn parseInputBoard(input: []const u8) !Board {
     }
     if (first_line_cols == null) return error.EmptyInput;
 
-    return Board.init(first_line_cols.?, rows, cells_array.toOwnedSlice());
+    return Board.fromFlatSlice(first_line_cols.?, rows, cells_array.toOwnedSlice());
 }
+
+// -----------------------------------------------------------------------------
+// Main
+// -----------------------------------------------------------------------------
 
 fn parseArgs() !Args {
     // First we specify what parameters our program can take.
@@ -272,8 +322,12 @@ pub fn main() !u8 {
             return 1;
         },
     };
+
     const board = try parseInputBoard(input);
     std.debug.print("{s}\n", .{try board.toStr()});
+
+    const matrix = try boardToMatrix(board);
+    std.debug.print("{s}\n", .{try matrix.toStr()});
 
     return 0;
 }
