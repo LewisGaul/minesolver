@@ -18,6 +18,7 @@ const clap = @import("clap");
 const ArrayList = std.ArrayList;
 const File = std.fs.File;
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 // -----------------------------------------------------------------------------
 // Declarations
@@ -29,7 +30,7 @@ const stderr = std.io.getStdErr().writer();
 
 const Args = struct {
     input_file: File,
-    mines: u8,
+    mines: u16,
     per_cell: u8 = 1,
 };
 
@@ -75,22 +76,21 @@ fn Grid(comptime T: type) type {
         data: [][]T,
 
         const Self = @This();
+        const Entry = struct { x: u8, y: u8, value: T };
 
         /// Iterator for iterating over cells in index order.
         const Iterator = struct {
-            grid: Grid,
+            grid: Self,
             idx: u8 = 0,
-
-            const Entry = struct { x: u8, y: u8, value: T };
 
             pub fn next(it: *@This()) ?Entry {
                 if (it.idx >= it.grid.xSize() * it.grid.ySize()) return null;
-                const x = it.idx % it.grid.ySize();
-                const y = @divFloor(it.idx, it.grid.ySize());
+                const x = it.idx % it.grid.xSize();
+                const y = @divFloor(it.idx, it.grid.xSize());
                 const entry = Entry{
                     .x = x,
                     .y = y,
-                    .value = it.grid.get(x, y) catch unreachable,
+                    .value = it.grid.get(x, y),
                 };
                 it.idx += 1;
                 return entry;
@@ -110,15 +110,16 @@ fn Grid(comptime T: type) type {
         }
 
         pub fn xSize(g: Self) u8 {
-            return g.data[0].len;
+            return std.math.cast(u8, g.data[0].len) catch unreachable;
         }
 
         pub fn ySize(g: Self) u8 {
-            return g.data.len;
+            return std.math.cast(u8, g.data.len) catch unreachable;
         }
 
-        pub fn get(g: Self, x: u8, y: u8) !T {
-            if (x >= g.xSize() or y >= g.ySize()) return error.OutOfBounds;
+        /// The 'x' and 'y' arguments must be in range of the grid bounds, as
+        /// given by 'Grid.xSize()' and 'Grid.ySize()'.
+        pub fn get(g: Self, x: u8, y: u8) T {
             return g.data[y][x];
         }
 
@@ -148,11 +149,37 @@ fn Grid(comptime T: type) type {
         pub fn iterator(g: Self) Iterator {
             return .{ .grid = g };
         }
+
+        /// Allocates the slice - memory owned by the caller.
+        pub fn getNeighbours(g: Self, x: u8, y: u8) ![]const Entry {
+            var x_min: u8 = x;
+            var x_max: u8 = x;
+            var y_min: u8 = y;
+            var y_max: u8 = y;
+            if (x > 0) x_min -= 1;
+            if (x < g.xSize() - 1) x_max += 1;
+            if (y > 0) y_min -= 1;
+            if (y < g.ySize() - 1) y_max += 1;
+            const num_nbrs = (x_max - x_min + 1) * (y_max - y_min + 1) - 1;
+            var nbrs = ArrayList(Entry).init(allocator);
+            try nbrs.ensureTotalCapacity(num_nbrs);
+            var i: u8 = x_min;
+            var j: u8 = y_min;
+            while (i <= x_max) : (i += 1) {
+                while (j <= y_max) : (j += 1) {
+                    if (i == x and j == y) continue;
+                    nbrs.appendAssumeCapacity(
+                        Entry{ .x = i, .y = j, .value = g.get(i, j) },
+                    );
+                }
+            }
+            return nbrs.toOwnedSlice();
+        }
     };
 }
 
 const Board = Grid(CellContents);
-const Matrix = Grid(u8);
+const Matrix = Grid(u16);
 
 // -----------------------------------------------------------------------------
 // Matrix board representation
@@ -160,15 +187,56 @@ const Matrix = Grid(u8);
 
 /// Convert a board into a set of simultaneous equations, represented in matrix
 /// form. The memory is owned by the caller.
-fn boardToMatrix(board: Board) !Matrix {
-    const unclicked_cells = board.count(.Unclicked);
-    const number_cells = board.count(.Number);
-    const rows: [][]u8 = try allocator.alloc([]u8, number_cells);
-    const all_matrix_cells: []u8 = try allocator.alloc(u8, unclicked_cells * number_cells);
-    var y: u8 = 0;
-    while (y < number_cells) : (y += 1) {
-        rows[y] = all_matrix_cells[y * unclicked_cells .. (y + 1) * unclicked_cells];
+fn boardToMatrix(board: Board, mines: u16) !Matrix {
+    const absInt = std.math.absInt;
+    // Each row of the matrix corresponds to one of the simultaneous equations,
+    // which come from each visible number on the board.
+    // There is an additional final row corresponding to the equation for the
+    // total number of mines in the board.
+    // Each column corresponds to an unclicked cell, where the value in the
+    // matrix is '1' if the unclicked cell is a neighbour of the row's displayed
+    // number, and '0' otherwise.
+    // There is a single column on the right corresponding to the RHS of the
+    // simultaneous equations, i.e. the value of the number shown in the cell
+    // corresponding to that row.
+    const num_columns = board.count(.Unclicked) + 1;
+    const num_rows = board.count(.Number) + 1;
+    const rows: [][]u16 = try allocator.alloc([]u16, num_rows);
+    const all_matrix_cells: []u16 = try allocator.alloc(u16, num_columns * num_rows);
+
+    var j: u8 = 0; // Matrix row index
+    var iter1 = board.iterator();
+    // Iterate over the numbers in the board, which correspond to the rows of
+    // the matrix.
+    while (iter1.next()) |num_entry| {
+        if (num_entry.value != .Number) continue;
+        const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
+        var i: u8 = 0; // Matrix column index
+        var iter2 = board.iterator();
+        while (iter2.next()) |uncl_entry| {
+            if (uncl_entry.value != .Unclicked) continue;
+            const is_nbr_x = (absInt(@as(i16, uncl_entry.x) - num_entry.x) catch unreachable) <= 1;
+            const is_nbr_y = (absInt(@as(i16, uncl_entry.y) - num_entry.y) catch unreachable) <= 1;
+            row[i] = if (is_nbr_x and is_nbr_y) 1 else 0;
+            i += 1;
+        }
+        assert(i == num_columns - 1);
+        // Add the final column value - the RHS of the equation.
+        row[i] = num_entry.value.Number;
+        rows[j] = row;
+        j += 1;
     }
+    assert(j == num_rows - 1);
+
+    // Add the final row on the end, corresponding to the total number of mines.
+    var i: u8 = 0;
+    const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
+    while (i < num_columns - 1) : (i += 1) {
+        row[i] = 1;
+    }
+    row[i] = mines;
+    rows[j] = row;
+
     return Matrix{ .data = rows };
 }
 
@@ -272,7 +340,7 @@ fn parseArgs() !Args {
     };
 
     const mines_arg = clap_args.positionals()[0];
-    const mines = std.fmt.parseUnsigned(u8, mines_arg, 10) catch |err| {
+    const mines = std.fmt.parseUnsigned(u16, mines_arg, 10) catch |err| {
         try stderr.writeAll("Expected positive integer number of mines\n");
         return err;
     };
@@ -324,10 +392,11 @@ pub fn main() !u8 {
     };
 
     const board = try parseInputBoard(input);
-    std.debug.print("{s}\n", .{try board.toStr()});
+    std.debug.print("Board:\n{s}\n", .{try board.toStr()});
 
-    const matrix = try boardToMatrix(board);
-    std.debug.print("{s}\n", .{try matrix.toStr()});
+    std.debug.print("\n", .{});
+    const matrix = try boardToMatrix(board, args.mines);
+    std.debug.print("Matrix:\n{s}\n", .{try matrix.toStr()});
 
     return 0;
 }
