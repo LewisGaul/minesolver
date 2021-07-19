@@ -34,8 +34,13 @@ const Args = struct {
 };
 
 const CellContents = union(enum) {
+    // Unclicked cell.
     Unclicked,
+    // Revealed space (effectively number 0).
+    Space,
+    // Revealed number (1, 2, 3, ...).
     Number: u8,
+    // Mine or flag (1, 2, 3, ...).
     Mine: u8,
 
     pub fn format(
@@ -46,13 +51,8 @@ const CellContents = union(enum) {
     ) !void {
         switch (self) {
             .Unclicked => try writer.writeByte('#'),
-            .Number => |n| {
-                if (n == 0) {
-                    try writer.writeByte('.');
-                } else {
-                    try writer.print("{}", .{n});
-                }
-            },
+            .Space => try writer.writeByte('.'),
+            .Number => |n| try writer.print("{}", .{n}),
             .Mine => |n| {
                 if (n == 1) {
                     try writer.writeByte('*');
@@ -122,12 +122,14 @@ fn Grid(comptime T: type) type {
             return g.data[y][x];
         }
 
-        pub fn count(g: Self, item: T) usize {
-            var total: usize = 0;
+        pub fn count(g: Self, item: anytype) usize {
+            var c: usize = 0;
             for (g.data) |row| {
-                total += std.mem.count(T, row, &.{item});
+                for (row) |cell| {
+                    if (cell == item) c += 1;
+                }
             }
-            return total;
+            return c;
         }
 
         pub fn toStr(g: Self) ![]const u8 {
@@ -159,10 +161,8 @@ const Matrix = Grid(u8);
 /// Convert a board into a set of simultaneous equations, represented in matrix
 /// form. The memory is owned by the caller.
 fn boardToMatrix(board: Board) !Matrix {
-    const unclicked_cells = 10;
-    // const unclicked_cells = board.count(CellContents.Unclicked); TODO
-    const number_cells = 5;
-    // const number_cells = board.count(CellContents.Number); TODO
+    const unclicked_cells = board.count(.Unclicked);
+    const number_cells = board.count(.Number);
     const rows: [][]u8 = try allocator.alloc([]u8, number_cells);
     const all_matrix_cells: []u8 = try allocator.alloc(u8, unclicked_cells * number_cells);
     var y: u8 = 0;
@@ -178,12 +178,12 @@ fn boardToMatrix(board: Board) !Matrix {
 
 fn parseInputCell(input: []const u8) !CellContents {
     switch (input[0]) {
-        '0'...'9' => return CellContents{
+        '1'...'9' => return CellContents{
             .Number = try std.fmt.parseUnsigned(u8, input, 10),
         },
-        '.' => {
+        '0', '.' => {
             if (input.len > 1) return error.UnexpectedCellText;
-            return CellContents{ .Number = 0 };
+            return CellContents.Space;
         },
         '#' => {
             if (input.len > 1) return error.UnexpectedCellText;
