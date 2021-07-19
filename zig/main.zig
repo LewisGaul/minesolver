@@ -222,9 +222,12 @@ fn parseArgs() !Args {
     };
 
     const mines_arg = clap_args.positionals()[0];
-    const mines = try std.fmt.parseUnsigned(u8, mines_arg, 10);
+    const mines = std.fmt.parseUnsigned(u8, mines_arg, 10) catch |err| {
+        try stderr.writeAll("Expected positive integer number of mines\n");
+        return err;
+    };
     if (mines == 0) {
-        try stderr.writeAll("Number of mines must be greater than 0\n");
+        try stderr.writeAll("Expected positive integer number of mines\n");
         return error.InvalidArgument;
     }
 
