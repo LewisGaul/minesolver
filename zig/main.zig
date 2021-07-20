@@ -178,67 +178,115 @@ fn Grid(comptime T: type) type {
     };
 }
 
-const Board = Grid(CellContents);
-const Matrix = Grid(u16);
+const Matrix = struct {
+    grid: Grid(isize),
 
-// -----------------------------------------------------------------------------
-// Matrix board representation
-// -----------------------------------------------------------------------------
+    const Self = @This();
 
-/// Convert a board into a set of simultaneous equations, represented in matrix
-/// form. The memory is owned by the caller.
-fn boardToMatrix(board: Board, mines: u16) !Matrix {
-    const absInt = std.math.absInt;
-    // Each row of the matrix corresponds to one of the simultaneous equations,
-    // which come from each visible number on the board.
-    // There is an additional final row corresponding to the equation for the
-    // total number of mines in the board.
-    // Each column corresponds to an unclicked cell, where the value in the
-    // matrix is '1' if the unclicked cell is a neighbour of the row's displayed
-    // number, and '0' otherwise.
-    // There is a single column on the right corresponding to the RHS of the
-    // simultaneous equations, i.e. the value of the number shown in the cell
-    // corresponding to that row.
-    const num_columns = board.count(.Unclicked) + 1;
-    const num_rows = board.count(.Number) + 1;
-    const rows: [][]u16 = try allocator.alloc([]u16, num_rows);
-    const all_matrix_cells: []u16 = try allocator.alloc(u16, num_columns * num_rows);
+    pub fn init(cells: [][]isize) Self {
+        return .{.grid = .{ .data = cells }};
+    }
 
-    var j: u8 = 0; // Matrix row index
-    var iter1 = board.iterator();
-    // Iterate over the numbers in the board, which correspond to the rows of
-    // the matrix.
-    while (iter1.next()) |num_entry| {
-        if (num_entry.value != .Number) continue;
-        const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
-        var i: u8 = 0; // Matrix column index
-        var iter2 = board.iterator();
-        while (iter2.next()) |uncl_entry| {
-            if (uncl_entry.value != .Unclicked) continue;
-            const is_nbr_x = (absInt(@as(i16, uncl_entry.x) - num_entry.x) catch unreachable) <= 1;
-            const is_nbr_y = (absInt(@as(i16, uncl_entry.y) - num_entry.y) catch unreachable) <= 1;
-            row[i] = if (is_nbr_x and is_nbr_y) 1 else 0;
-            i += 1;
+    pub fn xSize(self: Self) u8 {
+        return self.grid.xSize();
+    }
+
+    pub fn ySize(self: Self) u8 {
+        return self.grid.ySize();
+    }
+
+    pub fn toStr(self: Self) ![]const u8 {
+        return self.grid.toStr();
+    }
+
+    /// Convert in-place to Reduced-Row-Echelon-Form.
+    pub fn rref(self: Self) void {
+        // TODO
+    }
+};
+
+const Board = struct {
+    grid: Grid(CellContents),
+    mines: u16,
+
+    const Self = @This();
+
+    /// Allocates memory, but also reuses the provided memory storing the
+    /// 'cells' slice, which must all be managed by caller.
+    pub fn fromFlatSlice(x_size: u8, y_size: u8, cells: []CellContents, mines: u16) !Self {
+        return Self{
+            .grid = try Grid(CellContents).fromFlatSlice(x_size, y_size, cells),
+            .mines = mines,
+        };
+    }
+
+    pub fn xSize(self: Self) u8 {
+        return self.grid.xSize();
+    }
+
+    pub fn ySize(self: Self) u8 {
+        return self.grid.ySize();
+    }
+
+    pub fn toStr(self: Self) ![]const u8 {
+        return self.grid.toStr();
+    }
+
+    /// Convert a board into a set of simultaneous equations, represented in matrix
+    /// form. The memory is owned by the caller.
+    pub fn toMatrix(self: Self) !Matrix {
+        const absInt = std.math.absInt;
+        // Each row of the matrix corresponds to one of the simultaneous equations,
+        // which come from each visible number on the board.
+        // There is an additional final row corresponding to the equation for the
+        // total number of mines in the board.
+        // Each column corresponds to an unclicked cell, where the value in the
+        // matrix is '1' if the unclicked cell is a neighbour of the row's displayed
+        // number, and '0' otherwise.
+        // There is a single column on the right corresponding to the RHS of the
+        // simultaneous equations, i.e. the value of the number shown in the cell
+        // corresponding to that row.
+        const num_columns = self.grid.count(.Unclicked) + 1;
+        const num_rows = self.grid.count(.Number) + 1;
+        const rows: [][]isize = try allocator.alloc([]isize, num_rows);
+        const all_matrix_cells: []isize = try allocator.alloc(isize, num_columns * num_rows);
+
+        var j: u8 = 0; // Matrix row index
+        var iter1 = self.grid.iterator();
+        // Iterate over the numbers in the board, which correspond to the rows of
+        // the matrix.
+        while (iter1.next()) |num_entry| {
+            if (num_entry.value != .Number) continue;
+            const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
+            var i: u8 = 0; // Matrix column index
+            var iter2 = self.grid.iterator();
+            while (iter2.next()) |uncl_entry| {
+                if (uncl_entry.value != .Unclicked) continue;
+                const is_nbr_x = (absInt(@as(i16, uncl_entry.x) - num_entry.x) catch unreachable) <= 1;
+                const is_nbr_y = (absInt(@as(i16, uncl_entry.y) - num_entry.y) catch unreachable) <= 1;
+                row[i] = if (is_nbr_x and is_nbr_y) 1 else 0;
+                i += 1;
+            }
+            assert(i == num_columns - 1);
+            // Add the final column value - the RHS of the equation.
+            row[i] = num_entry.value.Number;
+            rows[j] = row;
+            j += 1;
         }
-        assert(i == num_columns - 1);
-        // Add the final column value - the RHS of the equation.
-        row[i] = num_entry.value.Number;
+        assert(j == num_rows - 1);
+
+        // Add the final row on the end, corresponding to the total number of mines.
+        var i: u8 = 0;
+        const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
+        while (i < num_columns - 1) : (i += 1) {
+            row[i] = 1;
+        }
+        row[i] = self.mines;
         rows[j] = row;
-        j += 1;
-    }
-    assert(j == num_rows - 1);
 
-    // Add the final row on the end, corresponding to the total number of mines.
-    var i: u8 = 0;
-    const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
-    while (i < num_columns - 1) : (i += 1) {
-        row[i] = 1;
+        return Matrix.init(rows);
     }
-    row[i] = mines;
-    rows[j] = row;
-
-    return Matrix{ .data = rows };
-}
+};
 
 // -----------------------------------------------------------------------------
 // Input parsing
@@ -266,7 +314,7 @@ fn parseInputCell(input: []const u8) !CellContents {
     }
 }
 
-fn parseInputBoard(input: []const u8) !Board {
+fn parseInputBoard(input: []const u8, mines: u16) !Board {
     var cells_array = ArrayList(CellContents).init(allocator);
     errdefer cells_array.deinit();
 
@@ -292,7 +340,12 @@ fn parseInputBoard(input: []const u8) !Board {
     }
     if (first_line_cols == null) return error.EmptyInput;
 
-    return Board.fromFlatSlice(first_line_cols.?, rows, cells_array.toOwnedSlice());
+    return Board.fromFlatSlice(
+        first_line_cols.?,
+        rows,
+        cells_array.toOwnedSlice(),
+        mines,
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -391,12 +444,16 @@ pub fn main() !u8 {
         },
     };
 
-    const board = try parseInputBoard(input);
+    const board = try parseInputBoard(input, args.mines);
     std.debug.print("Board:\n{s}\n", .{try board.toStr()});
 
     std.debug.print("\n", .{});
-    const matrix = try boardToMatrix(board, args.mines);
+    const matrix = try board.toMatrix();
     std.debug.print("Matrix:\n{s}\n", .{try matrix.toStr()});
+
+    std.debug.print("\n", .{});
+    matrix.rref();
+    std.debug.print("RREF matrix:\n{s}\n", .{try matrix.toStr()});
 
     return 0;
 }
