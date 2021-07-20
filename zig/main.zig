@@ -21,7 +21,24 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 // -----------------------------------------------------------------------------
-// Declarations
+// Helper functions
+// -----------------------------------------------------------------------------
+
+fn lcm(val1: usize, val2: usize) usize {
+    // TODO: Implement this properly!
+    if (val1 == val2) return val1;
+    if (val1 % val2 == 0) return val1;
+    if (val2 % val1 == 0) return val2;
+    // TODO: Dodgy int casts...
+    return @intCast(u16, val1) * @intCast(u16, val2);
+}
+
+fn absDifference(val1: anytype, val2: @TypeOf(val1)) @TypeOf(val1) {
+    return if (val1 >= val2) val1 - val2 else val2 - val1;
+}
+
+// -----------------------------------------------------------------------------
+// Declarations, structs
 // -----------------------------------------------------------------------------
 
 var allocator: *Allocator = undefined;
@@ -184,7 +201,7 @@ const Matrix = struct {
     const Self = @This();
 
     pub fn init(cells: [][]isize) Self {
-        return .{.grid = .{ .data = cells }};
+        return .{ .grid = .{ .data = cells } };
     }
 
     pub fn xSize(self: Self) u8 {
@@ -195,13 +212,88 @@ const Matrix = struct {
         return self.grid.ySize();
     }
 
+    /// The 'x' and 'y' arguments must be in range of the grid bounds, as
+    /// given by 'xSize()' and 'ySize()'.
+    pub fn get(self: Self, x: u8, y: u8) isize {
+        return self.grid.get(x, y);
+    }
+
     pub fn toStr(self: Self) ![]const u8 {
         return self.grid.toStr();
     }
 
     /// Convert in-place to Reduced-Row-Echelon-Form.
-    pub fn rref(self: Self) void {
-        // TODO
+    pub fn rref(self: *Self) void {
+        var row_idx: u8 = 0;
+        var col_idx: u8 = 0;
+        while (col_idx < self.xSize()) : (col_idx += 1) {
+            if (self.findNonZeroRowInColumn(col_idx, row_idx)) |non_zero_row_idx| {
+                if (row_idx != non_zero_row_idx) {
+                    self.swapRows(row_idx, non_zero_row_idx);
+                }
+            } else continue;
+
+            // Now the pivot row 'row_idx' should contain a non-zero value in
+            // the pivot column 'col_idx'.
+            if (self.get(col_idx, row_idx) < 0) self.negateRow(row_idx);
+            assert(self.get(col_idx, row_idx) > 0);
+            const pivot_val = @intCast(usize, self.get(col_idx, row_idx));
+            var inner_row_idx = row_idx + 1;
+
+            while (inner_row_idx < self.ySize()) : (inner_row_idx += 1) {
+                if (self.get(col_idx, inner_row_idx) == 0) continue;
+
+                if (self.get(col_idx, inner_row_idx) < 0) self.negateRow(inner_row_idx);
+                assert(self.get(col_idx, inner_row_idx) > 0);
+                const inner_row_val = @intCast(usize, self.get(col_idx, inner_row_idx));
+
+                const pivot_lcm = lcm(pivot_val, inner_row_val);
+                self.multiplyRow(row_idx, pivot_lcm / pivot_val);
+                self.multiplyRow(inner_row_idx, pivot_lcm / inner_row_val);
+                self.subtractRow(inner_row_idx, row_idx);
+
+                assert(self.get(col_idx, inner_row_idx) == 0);
+            }
+            row_idx += 1;
+        }
+    }
+
+    /// Find the first non-zero value in the specified column, returning the row
+    /// index.
+    fn findNonZeroRowInColumn(self: Self, col_idx: u8, start_row_idx: u8) ?u8 {
+        var row_idx: u8 = start_row_idx;
+        while (row_idx < self.ySize()) : (row_idx += 1) {
+            if (self.get(col_idx, row_idx) != 0) return row_idx;
+        }
+        return null;
+    }
+
+    /// Swap the two rows with the given indexes.
+    fn swapRows(self: *Self, row1_idx: u8, row2_idx: u8) void {
+        const row1 = self.grid.data[row1_idx];
+        const row2 = self.grid.data[row2_idx];
+        self.grid.data[row1_idx] = row2;
+        self.grid.data[row2_idx] = row1;
+    }
+
+    fn negateRow(self: *Self, row_idx: u8) void {
+        for (self.grid.data[row_idx]) |*cell| {
+            cell.* *= -1;
+        }
+    }
+
+    fn multiplyRow(self: *Self, row_idx: u8, factor: usize) void {
+        if (factor == 1) return;
+        for (self.grid.data[row_idx]) |*cell| {
+            // TODO: Dodgy int casts...
+            cell.* = @intCast(u16, cell.*) * @intCast(u16, factor);
+        }
+    }
+
+    fn subtractRow(self: *Self, row_idx: u8, sub_row_idx: u8) void {
+        for (self.grid.data[row_idx]) |*cell, col_idx| {
+            cell.* -= self.get(@intCast(u8, col_idx), sub_row_idx);
+        }
     }
 };
 
@@ -260,16 +352,23 @@ const Board = struct {
             const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
             var i: u8 = 0; // Matrix column index
             var iter2 = self.grid.iterator();
-            while (iter2.next()) |uncl_entry| {
-                if (uncl_entry.value != .Unclicked) continue;
-                const is_nbr_x = (absInt(@as(i16, uncl_entry.x) - num_entry.x) catch unreachable) <= 1;
-                const is_nbr_y = (absInt(@as(i16, uncl_entry.y) - num_entry.y) catch unreachable) <= 1;
+            var nbr_mines: u8 = 0;
+            while (iter2.next()) |nbr_entry| {
+                switch (nbr_entry.value) {
+                    .Mine => |m| {
+                        nbr_mines += m;
+                    },
+                    else => {},
+                }
+                if (nbr_entry.value != .Unclicked) continue;
+                const is_nbr_x = absDifference(nbr_entry.x, num_entry.x) <= 1;
+                const is_nbr_y = absDifference(nbr_entry.y, num_entry.y) <= 1;
                 row[i] = if (is_nbr_x and is_nbr_y) 1 else 0;
                 i += 1;
             }
             assert(i == num_columns - 1);
             // Add the final column value - the RHS of the equation.
-            row[i] = num_entry.value.Number;
+            row[i] = num_entry.value.Number - nbr_mines;
             rows[j] = row;
             j += 1;
         }
@@ -448,7 +547,7 @@ pub fn main() !u8 {
     std.debug.print("Board:\n{s}\n", .{try board.toStr()});
 
     std.debug.print("\n", .{});
-    const matrix = try board.toMatrix();
+    var matrix = try board.toMatrix();
     std.debug.print("Matrix:\n{s}\n", .{try matrix.toStr()});
 
     std.debug.print("\n", .{});
