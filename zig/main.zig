@@ -21,16 +21,36 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 // -----------------------------------------------------------------------------
+// Globals
+// -----------------------------------------------------------------------------
+
+pub const log_level = .info;
+
+var allocator: *Allocator = undefined;
+
+const stderr = std.io.getStdErr().writer();
+
+// -----------------------------------------------------------------------------
 // Helper functions
 // -----------------------------------------------------------------------------
 
+/// Greatest common divisor.
+fn gcd(val1: usize, val2: usize) usize {
+    const larger = if (val1 >= val2) val1 else val2;
+    const smaller = if (val1 >= val2) val2 else val1;
+    return if (larger % smaller == 0)
+        smaller
+    else
+        gcd(smaller, larger % smaller);
+}
+
+// Lowest common multiple.
 fn lcm(val1: usize, val2: usize) usize {
-    // TODO: Implement this properly!
     if (val1 == val2) return val1;
     if (val1 % val2 == 0) return val1;
     if (val2 % val1 == 0) return val2;
     // TODO: Dodgy int casts...
-    return @intCast(u16, val1) * @intCast(u16, val2);
+    return @intCast(u16, val1) * @intCast(u16, val2) / gcd(val1, val2);
 }
 
 fn absDifference(val1: anytype, val2: @TypeOf(val1)) @TypeOf(val1) {
@@ -38,12 +58,8 @@ fn absDifference(val1: anytype, val2: @TypeOf(val1)) @TypeOf(val1) {
 }
 
 // -----------------------------------------------------------------------------
-// Declarations, structs
+// Structs
 // -----------------------------------------------------------------------------
-
-var allocator: *Allocator = undefined;
-
-const stderr = std.io.getStdErr().writer();
 
 const Args = struct {
     input_file: File,
@@ -150,13 +166,25 @@ fn Grid(comptime T: type) type {
             return c;
         }
 
-        pub fn toStr(g: Self) ![]const u8 {
+        pub fn toStr(g: Self, opts: struct { sep_idx: ?u8 = null }) ![]const u8 {
+            // Find the max cell width.
+            var max_width: u64 = 0;
+            var iter = g.iterator();
+            while (iter.next()) |entry| {
+                const cell_width = std.fmt.count("{}", .{entry.value});
+                if (cell_width > max_width) max_width = cell_width;
+            }
+
             var buf = ArrayList(u8).init(allocator);
             errdefer buf.deinit();
             var writer = buf.writer();
             for (g.data) |row, y| {
                 if (y > 0) try writer.writeByte('\n');
-                for (row) |cell| {
+                for (row) |cell, i| {
+                    if (opts.sep_idx != null and opts.sep_idx.? == i)
+                        try writer.print("| ", .{});
+                    const cell_width = std.fmt.count("{}", .{cell});
+                    try writer.writeByteNTimes(' ', max_width - cell_width);
                     try writer.print("{} ", .{cell});
                 }
             }
@@ -218,8 +246,8 @@ const Matrix = struct {
         return self.grid.get(x, y);
     }
 
-    pub fn toStr(self: Self) ![]const u8 {
-        return self.grid.toStr();
+    pub fn toStr(self: Self, opts: struct { sep_idx: ?u8 = null }) ![]const u8 {
+        return self.grid.toStr(.{ .sep_idx = opts.sep_idx });
     }
 
     /// Convert in-place to Reduced-Row-Echelon-Form.
@@ -227,30 +255,56 @@ const Matrix = struct {
         var row_idx: u8 = 0;
         var col_idx: u8 = 0;
         while (col_idx < self.xSize()) : (col_idx += 1) {
+            std.log.debug("Column {d}, row {d}:\n{s}", .{ col_idx, row_idx, self.toStr(.{}) catch unreachable });
             if (self.findNonZeroRowInColumn(col_idx, row_idx)) |non_zero_row_idx| {
                 if (row_idx != non_zero_row_idx) {
+                    std.log.debug("Swapping rows {d} and {d}", .{ row_idx, non_zero_row_idx });
                     self.swapRows(row_idx, non_zero_row_idx);
                 }
-            } else continue;
+            } else {
+                std.log.debug("No row with non-zero value found, skipping column {d}", .{col_idx});
+                continue;
+            }
 
             // Now the pivot row 'row_idx' should contain a non-zero value in
             // the pivot column 'col_idx'.
-            if (self.get(col_idx, row_idx) < 0) self.negateRow(row_idx);
+            if (self.get(col_idx, row_idx) < 0) {
+                std.log.debug("Negating row {d}", .{row_idx});
+                self.negateRow(row_idx);
+            }
             assert(self.get(col_idx, row_idx) > 0);
             const pivot_val = @intCast(usize, self.get(col_idx, row_idx));
-            var inner_row_idx = row_idx + 1;
 
+            var inner_row_idx: u8 = 0;
             while (inner_row_idx < self.ySize()) : (inner_row_idx += 1) {
+                if (row_idx == inner_row_idx) continue;
                 if (self.get(col_idx, inner_row_idx) == 0) continue;
 
-                if (self.get(col_idx, inner_row_idx) < 0) self.negateRow(inner_row_idx);
-                assert(self.get(col_idx, inner_row_idx) > 0);
-                const inner_row_val = @intCast(usize, self.get(col_idx, inner_row_idx));
+                if (self.get(col_idx, inner_row_idx) < 0 and inner_row_idx > row_idx) {
+                    std.log.debug("Negating row {d}", .{inner_row_idx});
+                    self.negateRow(inner_row_idx);
+                    assert(self.get(col_idx, inner_row_idx) > 0);
+                }
+                const abs_inner_row_val = std.math.absCast(self.get(col_idx, inner_row_idx));
 
-                const pivot_lcm = lcm(pivot_val, inner_row_val);
-                self.multiplyRow(row_idx, pivot_lcm / pivot_val);
-                self.multiplyRow(inner_row_idx, pivot_lcm / inner_row_val);
-                self.subtractRow(inner_row_idx, row_idx);
+                const pivot_lcm = lcm(pivot_val, abs_inner_row_val);
+                const pivot_multiple = pivot_lcm / pivot_val;
+                const inner_multiple = pivot_lcm / abs_inner_row_val;
+                if (pivot_multiple != 1) {
+                    std.log.debug("Multiplying row {d} by {d}", .{ row_idx, pivot_multiple });
+                    self.multiplyRow(row_idx, pivot_multiple);
+                }
+                if (inner_multiple != 1) {
+                    std.log.debug("Multiplying row {d} by {d}", .{ inner_row_idx, inner_multiple });
+                    self.multiplyRow(inner_row_idx, inner_multiple);
+                }
+                if (self.get(col_idx, inner_row_idx) < 0) {
+                    std.log.debug("Adding row {d} to row {d}", .{ row_idx, inner_row_idx });
+                    self.addRow(inner_row_idx, row_idx);
+                } else {
+                    std.log.debug("Subtracting row {d} from row {d}", .{ row_idx, inner_row_idx });
+                    self.subtractRow(inner_row_idx, row_idx);
+                }
 
                 assert(self.get(col_idx, inner_row_idx) == 0);
             }
@@ -290,6 +344,12 @@ const Matrix = struct {
         }
     }
 
+    fn addRow(self: *Self, row_idx: u8, sub_row_idx: u8) void {
+        for (self.grid.data[row_idx]) |*cell, col_idx| {
+            cell.* += self.get(@intCast(u8, col_idx), sub_row_idx);
+        }
+    }
+
     fn subtractRow(self: *Self, row_idx: u8, sub_row_idx: u8) void {
         for (self.grid.data[row_idx]) |*cell, col_idx| {
             cell.* -= self.get(@intCast(u8, col_idx), sub_row_idx);
@@ -321,7 +381,7 @@ const Board = struct {
     }
 
     pub fn toStr(self: Self) ![]const u8 {
-        return self.grid.toStr();
+        return self.grid.toStr(.{});
     }
 
     /// Convert a board into a set of simultaneous equations, represented in matrix
@@ -548,11 +608,17 @@ pub fn main() !u8 {
 
     std.debug.print("\n", .{});
     var matrix = try board.toMatrix();
-    std.debug.print("Matrix:\n{s}\n", .{try matrix.toStr()});
+    std.debug.print(
+        "Matrix:\n{s}\n",
+        .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
+    );
 
     std.debug.print("\n", .{});
     matrix.rref();
-    std.debug.print("RREF matrix:\n{s}\n", .{try matrix.toStr()});
+    std.debug.print(
+        "RREF matrix:\n{s}\n",
+        .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
+    );
 
     return 0;
 }
