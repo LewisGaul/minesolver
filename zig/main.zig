@@ -414,16 +414,18 @@ const Board = struct {
             var iter2 = self.grid.iterator();
             var nbr_mines: u8 = 0;
             while (iter2.next()) |nbr_entry| {
-                switch (nbr_entry.value) {
-                    .Mine => |m| {
-                        nbr_mines += m;
-                    },
-                    else => {},
-                }
-                if (nbr_entry.value != .Unclicked) continue;
                 const is_nbr_x = absDifference(nbr_entry.x, num_entry.x) <= 1;
                 const is_nbr_y = absDifference(nbr_entry.y, num_entry.y) <= 1;
-                row[i] = if (is_nbr_x and is_nbr_y) 1 else 0;
+                const is_nbr = is_nbr_x and is_nbr_y;
+                switch (nbr_entry.value) {
+                    .Mine => |m| {
+                        if (is_nbr) nbr_mines += m;
+                        continue;
+                    },
+                    .Unclicked => {}, // Fall through
+                    else => continue,
+                }
+                row[i] = if (is_nbr) 1 else 0;
                 i += 1;
             }
             assert(i == num_columns - 1);
