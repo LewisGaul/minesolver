@@ -5,25 +5,100 @@ This document contains an implementation-level design of this minesweeper solver
 
 ## Probability Calculation
 
-### Finding Equivalence Groups
+### Matrix approach
+
+The first step in the process is to reduce the board into a structure that can be worked with more easily. This makes sense to be done by reducing to matrix form (since a minesweeper board is effectively no more than a set of simultaneous equations). An alternative approach is sketched out in a section below.
+
+- Each row of the matrix corresponds to one of the simultaneous equations, which come from each visible number on the board.
+- There is an additional final row corresponding to the equation for the total number of mines in the board.
+- Each column corresponds to an unclicked cell, where the value in the matrix is '1' if the unclicked cell is a neighbour of the row's displayed number, and '0' otherwise.
+- There is a single column on the right corresponding to the RHS of the simultaneous equations, i.e. the value of the number shown in the cell corresponding to that row.
+
+The matrix can then be reduced to RREF (reduced-row echelon form). Since the initial matrix contains only integers, the reduction can be performed such that the resulting matrix also contains only integers (positive or negative) - this is at the cost of being able to guarantee each leading row value is a '1', but this is inconsequential.
+
+Example:
+```
+Board:
+# 2 # # #
+# # # # #
+# 3 # # #
+# 2 # 4 *
+# # # # #
+
+Matrix:
+1 1 0 0 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 | 2
+0 0 0 0 1 1 1 0 0 1 1 0 0 1 1 0 0 0 0 0 | 3
+0 0 0 0 0 0 0 0 0 1 1 0 0 1 1 1 1 1 0 0 | 2
+0 0 0 0 0 0 0 0 0 0 1 1 1 0 1 0 0 1 1 1 | 3
+1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 8
+
+RREF matrix:
+ 1  1  0  0  0  0  0  0  0  0  0  0  0  0  0  1  1  1  0  0 |  1
+ 0  0  1  1  0  0  0  1  1  0  0  1  1  0  0  0  0  0  1  1 |  4
+ 0  0  0  0  1  1  1  0  0  0  0  0  0  0  0 -1 -1 -1  0  0 |  1
+ 0  0  0  0  0  0  0  0  0  1  0 -1 -1  1  0  1  1  0 -1 -1 | -1
+ 0  0  0  0  0  0  0  0  0  0  1  1  1  0  1  0  0  1  1  1 |  3
+```
+
+
+### Finding equivalence groups
+
+Note that this part of the process is not strictly necessary, but does provide some insight into the board structure, and can serve as an optimisation. It does involve a bit of careful bookkeeping though, so may be worth omitting from early implementations.
+
+When using the matrix approach this is as simple as finding identical columns - these correspond to unclicked cells that are in the same equivalence group, and they can be collapsed into a single column. In this case each column of the resulting matrix corresponds to a group (which in turn corresponds to a number of cells).
+
+Example:
+```
+Board:
+# 2 # # #
+# # # # #
+# 3 # # #
+# 2 # 4 *
+# # # # #
+
+Matrix:
+1 0 1 0 0 0 0 0 | 2
+0 0 1 1 1 0 0 0 | 3
+0 0 0 1 1 0 1 1 | 2
+0 0 0 0 1 1 0 1 | 3
+1 1 1 1 1 1 1 1 | 8
+
+RREF matrix:
+ 1  0  0  0  0  0  1  1 |  1
+ 0  1  0  0  0  1  0  0 |  4
+ 0  0  1  0  0  0 -1 -1 |  1
+ 0  0  0  1  0 -1  1  0 | -1
+ 0  0  0  0  1  1  0  1 |  3
+
+Groups (<group number>: <unclicked cell numbers>):
+1: 1, 2
+2: 3, 4, 8, 9   <- This is the 'outer' group, not next to any numbers
+3: 5, 6, 7
+4: 10, 14
+5: 11, 15
+6: 12, 13, 19, 20
+7: 16, 17
+8: 18
+```
+
+
+### Finding mine configurations
 
 TODO
 
 
-### Finding Mine Configurations
+### Calculating the probabilities
 
 TODO
 
-
-### Calculating the Probabilities
-
-TODO
 
 
 ## Sketch Implementation
 
 A sketch of the implementation is given below, using a Rust-like syntax to give a view of relevant APIs and their usage.
 
+
+### Grid and Board types
 
 There's an underlying grid type to model the 2-dimensional grid. There are then two types wrapping this: the board that we're working out probabilities for and the grid of probabilities for the board. At the highest-level view this is enough to encapsulate what we want to achieve: to map an in-progress game board to a grid of probabilities.
 
@@ -44,9 +119,32 @@ type ProbabilityGrid = Grid<f32>;
 ```
 
 
-The first step in the process is to reduce the board into a structure that can be worked with more easily. We create a new type to represent this restructured data, which has been decomposed from grid form.
+### Board reduction
 
-[TODO: This process makes sense to be performed using matrix reduction.]
+TODO
+
+
+### Finding mine configurations
+
+Now the most complex (and compuatationally intensive) step - we need to take this reduced representation and find all possible ways to place mines in the equivalence groups of unclicked cells.
+
+TODO
+
+
+### Calculating probabilities
+
+Finally we need to convert these combinations into a grid of probabilities.
+
+```rust
+fn find_probabilities(combs: Vec<Vec<u32>>, groups: Vec<BoardGroup>, per_cell: u32) -> ProbabilityGrid {
+    // TODO
+}
+```
+
+
+## Alternative Approach
+
+This approach avoids the use of matrices - in some ways it's a bit easier to relate the process back to the board structure, but in some ways it's also harder to keep track of things.
 
 [Note: We're actually skipping an optional step here of reducing the board by applying solver logic, e.g. if a number '1' is only next to one unclicked cell.]
 
@@ -110,17 +208,6 @@ fn decompose_board(board: &Board) -> DecomposedBoard {
 }
 ```
 
-
-Now the most complex (and compuatationally intensive) step - we need to take this reduced representation and find all possible ways to place mines in the equivalence groups of unclicked cells.
-
-```rust
-struct Combinations {
-    // Equivalence groups (to be moved from ReducedBoard).
-    groups: Vec<Vec<Coord>>,     // X cells, Y groups
-    // A single combination has length equal to the number of groups.
-    combinations: Vec<Vec<u32>>, // Y groups, Z combinations
-}
-```
 
 ```rust
 fn find_combinations(board: DecomposedBoard) -> Combinations {
@@ -188,14 +275,5 @@ fn find_combinations(board: DecomposedBoard) -> Combinations {
      * (2) - (3): g1 = g3 + g5 + 1  =>  g1 >= 1  and  g3, g5 <= 1
      * (4) - (3): g6 = g2 + g3 + 2  =>  g6 >= 2
      */
-}
-```
-
-
-Finally we need to convert these combinations into a grid of probabilities.
-
-```rust
-fn find_probabilities(combs: &Combinations, per_cell: u32) -> ProbabilityGrid {
-    
 }
 ```
