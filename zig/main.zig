@@ -83,6 +83,8 @@ const CellContents = union(enum) {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         switch (self) {
             .Unclicked => try writer.writeByte('#'),
             .Space => try writer.writeByte('.'),
@@ -130,23 +132,29 @@ fn Grid(comptime T: type) type {
             }
         };
 
-        /// Allocates memory, but also reuses the provided memory storing the
-        /// 'cells' slice, which must all be managed by caller.
-        pub fn fromFlatSlice(x_size: u8, y_size: u8, cells: []T) !Self {
-            if (cells.len != x_size * y_size or cells.len == 0) return error.InvalidNumberOfCells;
+        /// Allocates memory to copy the data, free by calling 'Grid.deinit()'.
+        pub fn fromFlatSlice(x_size: u8, y_size: u8, cells: []const T) !Self {
+            if (cells.len != x_size * y_size or cells.len == 0)
+                return error.InvalidNumberOfCells;
             const rows: [][]T = try allocator.alloc([]T, y_size);
-            var y: u8 = 0;
-            while (y < y_size) : (y += 1) {
-                rows[y] = cells[y * x_size .. (y + 1) * x_size];
+            for (rows) |*row, y| {
+                row.* = try allocator.dupe(T, cells[y * x_size .. (y + 1) * x_size]);
             }
             return Self{ .data = rows };
         }
 
+        pub fn fromOwnedData(data: []const []const T) !Self {
+            const new_rows = try allocator.alloc([]T, data.len);
+            for (data) |row, i| {
+                new_rows[i] = try allocator.dupe(T, row);
+            }
+            return Self{ .data = new_rows };
+        }
+
         pub fn deinit(g: Self) void {
-            // TODO
-            // for (g.data) |row| {
-            //     allocator.free(row);
-            // }
+            for (g.data) |row| {
+                allocator.free(row);
+            }
             allocator.free(g.data);
         }
 
@@ -207,14 +215,20 @@ fn Grid(comptime T: type) type {
             for (g.data) |row, y| {
                 if (y > 0) try writer.writeByte('\n');
                 for (row) |cell, i| {
+                    if (i > 0) try writer.writeByte(' ');
                     if (opts.sep_idx != null and opts.sep_idx.? == i)
                         try writer.print("| ", .{});
                     const cell_width = std.fmt.count("{}", .{cell});
                     try writer.writeByteNTimes(' ', max_width - cell_width);
-                    try writer.print("{} ", .{cell});
+                    try writer.print("{}", .{cell});
                 }
             }
             return buf.toOwnedSlice();
+        }
+
+        /// Make a shallow copy of the grid - memory owned by the caller.
+        pub fn copy(g: Self) !Self {
+            return g.fromOwnedData(g.data);
         }
 
         pub fn iterator(g: Self) Iterator {
@@ -254,8 +268,37 @@ const Matrix = struct {
 
     const Self = @This();
 
-    pub fn init(cells: [][]isize) Self {
-        return .{ .grid = .{ .data = cells } };
+    pub fn init(cells: [][]isize) !Self {
+        return Self{ .grid = try Grid(isize).fromOwnedData(cells) };
+    }
+
+    pub fn fromStr(input: []const u8) !Self {
+        var rows = ArrayList([]isize).init(allocator);
+        defer rows.deinit();
+
+        var first_line_cols: ?usize = null;
+        var lines_iter = std.mem.tokenize(input, "\r\n");
+        while (lines_iter.next()) |line| {
+            var row = ArrayList(isize).init(allocator);
+            defer row.deinit();
+            var cells_iter = std.mem.tokenize(line, " \t");
+            while (cells_iter.next()) |cell| {
+                const val = try std.fmt.parseInt(isize, cell, 10);
+                try row.append(val);
+            }
+            if (row.items.len == 0) {
+                // Ignore blank lines.
+                continue;
+            } else if (first_line_cols == null) {
+                first_line_cols = row.items.len;
+            } else if (row.items.len != first_line_cols) {
+                return error.InconsistentGridShape;
+            }
+            try rows.append(row.toOwnedSlice());
+        }
+        if (first_line_cols == null) return error.EmptyInput;
+
+        return Self{.grid = Grid(isize){.data = rows.toOwnedSlice()}};
     }
 
     pub fn deinit(self: Self) void {
@@ -290,6 +333,31 @@ const Matrix = struct {
 
     pub fn toStr(self: Self, opts: struct { sep_idx: ?u8 = null }) ![]const u8 {
         return self.grid.toStr(.{ .sep_idx = opts.sep_idx });
+    }
+
+    /// Returns a copy of the matrix - memory owned by the caller.
+    pub fn copy(self: Self) !Self {
+        return Self{ .grid = try self.grid.copy() };
+    }
+
+    pub fn matrixMultiply(self: Self, other: Self) !Self {
+        assert(self.xSize() == other.ySize());
+        const new_rows = try allocator.alloc([]isize, self.ySize());
+        var y: u8 = 0;
+        for (new_rows) |*new_row| {
+            new_row.* = try allocator.alloc(isize, other.xSize());
+            var x: u8 = 0;
+            for (new_row.*) |*cell| {
+                cell.* = 0;
+                var idx: u8 = 0;
+                while (idx < self.xSize()) : (idx += 1) {
+                    cell.* += self.getCell(idx, y) * other.getCell(x, idx);
+                }
+                x += 1;
+            }
+            y += 1;
+        }
+        return Self{.grid = Grid(isize){.data = new_rows}};
     }
 
     /// Convert in-place to Reduced-Row-Echelon-Form.
@@ -433,7 +501,6 @@ const Board = struct {
     /// Convert a board into a set of simultaneous equations, represented in matrix
     /// form. The memory is owned by the caller.
     pub fn toMatrix(self: Self) !Matrix {
-        const absInt = std.math.absInt;
         // Each row of the matrix corresponds to one of the simultaneous equations,
         // which come from each visible number on the board.
         // There is an additional final row corresponding to the equation for the
@@ -497,20 +564,32 @@ const Board = struct {
 
 const Solver = struct {
     board: Board,
+    per_cell: u8,
+    /// Each inner slice contains indexes to grid positions.
     groups: []const []const u8,
     matrix: Matrix,
 
     const Self = @This();
 
-    pub fn init(board: Board) !Self {
+    /// The board is still owned by the caller and should be independently
+    /// deinitialised.
+    pub fn init(board: Board, per_cell: u8) !Self {
         var self = Self{
             .board = board,
+            .per_cell = per_cell,
             .groups = undefined,
             .matrix = try board.toMatrix(),
         };
         try self.reduceToGroups();
         self.matrix.rref();
         return self;
+    }
+
+    pub fn deinit(self: Self) void {
+        for (self.groups) |group| {
+            allocator.free(group);
+        }
+        allocator.free(self.groups);
     }
 
     fn reduceToGroups(self: *Self) !void {
@@ -705,6 +784,11 @@ pub fn main() !u8 {
         else => return 1,
     };
 
+    std.debug.print(
+        "Parsed args:\nmines={d}, per_cell={d}\n",
+        .{ args.mines, args.per_cell },
+    );
+
     const max_size = 1024 * 1024; // 1MB
     const input = args.input_file.readToEndAlloc(
         allocator,
@@ -719,6 +803,8 @@ pub fn main() !u8 {
             return 1;
         },
     };
+
+    std.debug.print("\n", .{});
 
     const board = try parseInputBoard(input, args.mines);
     defer board.deinit();
@@ -743,18 +829,57 @@ pub fn main() !u8 {
 
     std.debug.print("\n", .{});
 
-    const solver = try Solver.init(board);
+    const solver = try Solver.init(board, args.per_cell);
+    defer solver.deinit();
     std.debug.print(
         "Solver matrix:\n{s}\n",
         .{try solver.matrix.toStr(.{ .sep_idx = solver.matrix.xSize() - 1 })},
     );
-    
+
     std.debug.print("\n", .{});
 
     std.debug.print("Solver groups:\n", .{});
     for (solver.groups) |group, i| {
-        std.debug.print("{d}: {d}\n", .{i, group});
+        std.debug.print("{d}: {d}\n", .{ i, group });
     }
 
     return 0;
+}
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
+
+test "Grid init/deinit" {
+    allocator = std.testing.allocator;
+    const data = [_]u8{ 1, 2, 3, 4, 5, 6 };
+    const grid = try Grid(u8).fromFlatSlice(2, 3, &data);
+    grid.deinit();
+}
+
+test "Matrix multiply" {
+    allocator = std.testing.allocator;
+    const matrix1 = try Matrix.fromStr(
+        \\ 1 2 3
+        \\ 4 5 6
+    );
+    defer matrix1.deinit();
+
+    const matrix2 = try Matrix.fromStr(
+        \\ 1 2
+        \\ 4 5
+        \\ 7 8
+    );
+    defer matrix2.deinit();
+
+    const matrix3 = try matrix1.matrixMultiply(matrix2);
+    defer matrix3.deinit();
+
+    const mat_str = try matrix3.toStr(.{});
+    defer allocator.free(mat_str);
+    const exp_str =
+        \\30 36
+        \\66 81
+        ;
+    try std.testing.expectEqualStrings(exp_str, mat_str);
 }
