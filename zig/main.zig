@@ -123,7 +123,7 @@ fn Grid(comptime T: type) type {
                 const entry = Entry{
                     .x = x,
                     .y = y,
-                    .value = it.grid.get(x, y),
+                    .value = it.grid.getCell(x, y),
                 };
                 it.idx += 1;
                 return entry;
@@ -142,6 +142,14 @@ fn Grid(comptime T: type) type {
             return Self{ .data = rows };
         }
 
+        pub fn deinit(g: Self) void {
+            // TODO
+            // for (g.data) |row| {
+            //     allocator.free(row);
+            // }
+            allocator.free(g.data);
+        }
+
         pub fn xSize(g: Self) u8 {
             return std.math.cast(u8, g.data[0].len) catch unreachable;
         }
@@ -152,8 +160,26 @@ fn Grid(comptime T: type) type {
 
         /// The 'x' and 'y' arguments must be in range of the grid bounds, as
         /// given by 'Grid.xSize()' and 'Grid.ySize()'.
-        pub fn get(g: Self, x: u8, y: u8) T {
+        pub fn getCell(g: Self, x: u8, y: u8) T {
             return g.data[y][x];
+        }
+
+        /// The 'idx' argument must be in range of the grid bounds, as given by
+        /// 'Grid.ySize()'.
+        pub fn getRow(g: Self, idx: u8) []const T {
+            return g.data[idx];
+        }
+
+        /// The 'idx' argument must be in range of the grid bounds, as given by
+        /// 'Grid.xSize()'.
+        pub fn getColumn(g: Self, idx: u8) ![]const T {
+            var list = ArrayList(T).init(allocator);
+            defer list.deinit();
+            try list.ensureTotalCapacity(g.xSize());
+            for (g.data) |row| {
+                list.appendAssumeCapacity(row[idx]);
+            }
+            return list.toOwnedSlice();
         }
 
         pub fn count(g: Self, item: anytype) usize {
@@ -214,7 +240,7 @@ fn Grid(comptime T: type) type {
                 while (j <= y_max) : (j += 1) {
                     if (i == x and j == y) continue;
                     nbrs.appendAssumeCapacity(
-                        Entry{ .x = i, .y = j, .value = g.get(i, j) },
+                        Entry{ .x = i, .y = j, .value = g.getCell(i, j) },
                     );
                 }
             }
@@ -232,6 +258,10 @@ const Matrix = struct {
         return .{ .grid = .{ .data = cells } };
     }
 
+    pub fn deinit(self: Self) void {
+        self.grid.deinit();
+    }
+
     pub fn xSize(self: Self) u8 {
         return self.grid.xSize();
     }
@@ -242,8 +272,20 @@ const Matrix = struct {
 
     /// The 'x' and 'y' arguments must be in range of the grid bounds, as
     /// given by 'xSize()' and 'ySize()'.
-    pub fn get(self: Self, x: u8, y: u8) isize {
-        return self.grid.get(x, y);
+    pub fn getCell(self: Self, x: u8, y: u8) isize {
+        return self.grid.getCell(x, y);
+    }
+
+    /// The 'idx' argument must be in range of the grid bounds, as given by
+    /// 'ySize()'.
+    pub fn getRow(self: Self, idx: u8) []const isize {
+        return self.grid.getRow(idx);
+    }
+
+    /// The 'idx' argument must be in range of the grid bounds, as given by
+    /// 'xSize()'.
+    pub fn getColumn(self: Self, idx: u8) ![]const isize {
+        return self.grid.getColumn(idx);
     }
 
     pub fn toStr(self: Self, opts: struct { sep_idx: ?u8 = null }) ![]const u8 {
@@ -268,24 +310,24 @@ const Matrix = struct {
 
             // Now the pivot row 'row_idx' should contain a non-zero value in
             // the pivot column 'col_idx'.
-            if (self.get(col_idx, row_idx) < 0) {
+            if (self.getCell(col_idx, row_idx) < 0) {
                 std.log.debug("Negating row {d}", .{row_idx});
                 self.negateRow(row_idx);
             }
-            assert(self.get(col_idx, row_idx) > 0);
-            const pivot_val = @intCast(usize, self.get(col_idx, row_idx));
+            assert(self.getCell(col_idx, row_idx) > 0);
+            const pivot_val = @intCast(usize, self.getCell(col_idx, row_idx));
 
             var inner_row_idx: u8 = 0;
             while (inner_row_idx < self.ySize()) : (inner_row_idx += 1) {
                 if (row_idx == inner_row_idx) continue;
-                if (self.get(col_idx, inner_row_idx) == 0) continue;
+                if (self.getCell(col_idx, inner_row_idx) == 0) continue;
 
-                if (self.get(col_idx, inner_row_idx) < 0 and inner_row_idx > row_idx) {
+                if (self.getCell(col_idx, inner_row_idx) < 0 and inner_row_idx > row_idx) {
                     std.log.debug("Negating row {d}", .{inner_row_idx});
                     self.negateRow(inner_row_idx);
-                    assert(self.get(col_idx, inner_row_idx) > 0);
+                    assert(self.getCell(col_idx, inner_row_idx) > 0);
                 }
-                const abs_inner_row_val = std.math.absCast(self.get(col_idx, inner_row_idx));
+                const abs_inner_row_val = std.math.absCast(self.getCell(col_idx, inner_row_idx));
 
                 const pivot_lcm = lcm(pivot_val, abs_inner_row_val);
                 const pivot_multiple = pivot_lcm / pivot_val;
@@ -298,7 +340,7 @@ const Matrix = struct {
                     std.log.debug("Multiplying row {d} by {d}", .{ inner_row_idx, inner_multiple });
                     self.multiplyRow(inner_row_idx, inner_multiple);
                 }
-                if (self.get(col_idx, inner_row_idx) < 0) {
+                if (self.getCell(col_idx, inner_row_idx) < 0) {
                     std.log.debug("Adding row {d} to row {d}", .{ row_idx, inner_row_idx });
                     self.addRow(inner_row_idx, row_idx);
                 } else {
@@ -306,7 +348,7 @@ const Matrix = struct {
                     self.subtractRow(inner_row_idx, row_idx);
                 }
 
-                assert(self.get(col_idx, inner_row_idx) == 0);
+                assert(self.getCell(col_idx, inner_row_idx) == 0);
             }
             row_idx += 1;
         }
@@ -317,7 +359,7 @@ const Matrix = struct {
     fn findNonZeroRowInColumn(self: Self, col_idx: u8, start_row_idx: u8) ?u8 {
         var row_idx: u8 = start_row_idx;
         while (row_idx < self.ySize()) : (row_idx += 1) {
-            if (self.get(col_idx, row_idx) != 0) return row_idx;
+            if (self.getCell(col_idx, row_idx) != 0) return row_idx;
         }
         return null;
     }
@@ -344,15 +386,15 @@ const Matrix = struct {
         }
     }
 
-    fn addRow(self: *Self, row_idx: u8, sub_row_idx: u8) void {
+    fn addRow(self: *Self, row_idx: u8, add_row_idx: u8) void {
         for (self.grid.data[row_idx]) |*cell, col_idx| {
-            cell.* += self.get(@intCast(u8, col_idx), sub_row_idx);
+            cell.* += self.getCell(@intCast(u8, col_idx), add_row_idx);
         }
     }
 
     fn subtractRow(self: *Self, row_idx: u8, sub_row_idx: u8) void {
         for (self.grid.data[row_idx]) |*cell, col_idx| {
-            cell.* -= self.get(@intCast(u8, col_idx), sub_row_idx);
+            cell.* -= self.getCell(@intCast(u8, col_idx), sub_row_idx);
         }
     }
 };
@@ -370,6 +412,10 @@ const Board = struct {
             .grid = try Grid(CellContents).fromFlatSlice(x_size, y_size, cells),
             .mines = mines,
         };
+    }
+
+    pub fn deinit(self: Self) void {
+        self.grid.deinit();
     }
 
     pub fn xSize(self: Self) u8 {
@@ -449,6 +495,76 @@ const Board = struct {
     }
 };
 
+const Solver = struct {
+    board: Board,
+    groups: []const []const u8,
+    matrix: Matrix,
+
+    const Self = @This();
+
+    pub fn init(board: Board) !Self {
+        var self = Self{
+            .board = board,
+            .groups = undefined,
+            .matrix = try board.toMatrix(),
+        };
+        try self.reduceToGroups();
+        self.matrix.rref();
+        return self;
+    }
+
+    fn reduceToGroups(self: *Self) !void {
+        var groups = ArrayList([]const u8).init(allocator);
+        defer groups.deinit();
+
+        // Indexes of columns to remove.
+        var remove_columns = ArrayList(u8).init(allocator);
+        defer remove_columns.deinit();
+
+        // Iterate over columns to find groups.
+        var x1: u8 = 0;
+        while (x1 < self.matrix.xSize() - 2) : (x1 += 1) {
+            // If already included in a group, skip over this column.
+            if (std.mem.indexOfScalar(u8, remove_columns.items, x1)) |_| continue;
+
+            const column1 = try self.matrix.getColumn(x1);
+
+            var group = ArrayList(u8).init(allocator);
+            defer group.deinit();
+            try group.append(x1);
+
+            var x2: u8 = x1 + 1;
+            while (x2 < self.matrix.xSize() - 1) : (x2 += 1) {
+                const column2 = try self.matrix.getColumn(x2);
+                if (std.mem.eql(isize, column1, column2)) {
+                    try remove_columns.append(x2);
+                    try group.append(x2);
+                }
+            }
+            try groups.append(group.toOwnedSlice());
+        }
+
+        const new_x_size = self.matrix.xSize() - @intCast(u8, remove_columns.items.len);
+        const y_size = self.matrix.ySize();
+
+        var new_matrix_cells = ArrayList(isize).init(allocator);
+        defer new_matrix_cells.deinit();
+        try new_matrix_cells.ensureTotalCapacity(new_x_size * y_size);
+
+        var iter = self.matrix.grid.iterator();
+        while (iter.next()) |entry| {
+            if (std.mem.indexOfScalar(u8, remove_columns.items, entry.x)) |_| continue;
+            new_matrix_cells.appendAssumeCapacity(entry.value);
+        }
+
+        self.groups = groups.toOwnedSlice();
+        self.matrix.deinit();
+        self.matrix = Matrix{
+            .grid = try Grid(isize).fromFlatSlice(new_x_size, y_size, new_matrix_cells.toOwnedSlice()),
+        };
+    }
+};
+
 // -----------------------------------------------------------------------------
 // Input parsing
 // -----------------------------------------------------------------------------
@@ -477,7 +593,7 @@ fn parseInputCell(input: []const u8) !CellContents {
 
 fn parseInputBoard(input: []const u8, mines: u16) !Board {
     var cells_array = ArrayList(CellContents).init(allocator);
-    errdefer cells_array.deinit();
+    defer cells_array.deinit();
 
     var rows: u8 = 0;
     var first_line_cols: ?u8 = null;
@@ -577,10 +693,9 @@ fn parseArgs() !Args {
 }
 
 pub fn main() !u8 {
-    // Use an arena allocator - no need to free memory as we go.
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    allocator = &arena.allocator;
+    // Set up an allocator - no need to free memory as we go.
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    allocator = &gpa.allocator;
 
     const args = parseArgs() catch |err| switch (err) {
         error.InvalidArgument,
@@ -606,21 +721,40 @@ pub fn main() !u8 {
     };
 
     const board = try parseInputBoard(input, args.mines);
+    defer board.deinit();
     std.debug.print("Board:\n{s}\n", .{try board.toStr()});
 
     std.debug.print("\n", .{});
+
     var matrix = try board.toMatrix();
+    defer matrix.deinit();
     std.debug.print(
         "Matrix:\n{s}\n",
         .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
     );
 
     std.debug.print("\n", .{});
+
     matrix.rref();
     std.debug.print(
         "RREF matrix:\n{s}\n",
         .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
     );
+
+    std.debug.print("\n", .{});
+
+    const solver = try Solver.init(board);
+    std.debug.print(
+        "Solver matrix:\n{s}\n",
+        .{try solver.matrix.toStr(.{ .sep_idx = solver.matrix.xSize() - 1 })},
+    );
+    
+    std.debug.print("\n", .{});
+
+    std.debug.print("Solver groups:\n", .{});
+    for (solver.groups) |group, i| {
+        std.debug.print("{d}: {d}\n", .{i, group});
+    }
 
     return 0;
 }
