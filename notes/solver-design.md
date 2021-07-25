@@ -7,14 +7,16 @@ This document contains an implementation-level design of this minesweeper solver
 
 ### Matrix approach
 
-The first step in the process is to reduce the board into a structure that can be worked with more easily. This makes sense to be done by reducing to matrix form (since a minesweeper board is effectively no more than a set of simultaneous equations). An alternative approach is sketched out in a section below.
+The first step in the process is to transform the board into a structure that can be worked with more easily. This makes sense to be done by transforming to matrix form (since a minesweeper board is effectively just a set of simultaneous equations). An alternative approach is sketched out in a section below.
 
 - Each row of the matrix corresponds to one of the simultaneous equations, which come from each visible number on the board.
 - There is an additional final row corresponding to the equation for the total number of mines in the board.
 - Each column corresponds to an unclicked cell, where the value in the matrix is '1' if the unclicked cell is a neighbour of the row's displayed number, and '0' otherwise.
 - There is a single column on the right corresponding to the RHS of the simultaneous equations, i.e. the value of the number shown in the cell corresponding to that row.
 
-The matrix can then be reduced to RREF (reduced-row echelon form). Since the initial matrix contains only integers, the reduction can be performed such that the resulting matrix also contains only integers (positive or negative) - this is at the cost of being able to guarantee each leading row value is a '1', but this is inconsequential.
+To find the possible configurations of mines in the board, we just need to find all non-negative integer solutions (also bounded by the maximum number of mines per cell).
+
+The matrix can be reduced to RREF (reduced-row echelon form). This is not strictly necessary, but can help with reading off solutions, and can serve as an optimisation for finding solutions. Since the initial matrix contains only integers, the reduction can be performed such that the resulting matrix also contains only integers (positive or negative) - this is at the cost of being able to guarantee each leading row value is a '1', but this is inconsequential.
 
 Example:
 ```
@@ -22,69 +24,152 @@ Board:
 # 2 # # #
 # # # # #
 # 3 # # #
-# 2 # 4 *
+# 2 # 4 #
 # # # # #
 
 Matrix:
-1 1 0 0 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 | 2
-0 0 0 0 1 1 1 0 0 1 1 0 0 1 1 0 0 0 0 0 | 3
-0 0 0 0 0 0 0 0 0 1 1 0 0 1 1 1 1 1 0 0 | 2
-0 0 0 0 0 0 0 0 0 0 1 1 1 0 1 0 0 1 1 1 | 3
-1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 8
+1 1 0 0 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 | 2
+0 0 0 0 1 1 1 0 0 1 1 0 0 1 1 0 0 0 0 0 0 | 3
+0 0 0 0 0 0 0 0 0 1 1 0 0 1 1 0 1 1 1 0 0 | 2
+0 0 0 0 0 0 0 0 0 0 1 1 1 0 1 1 0 0 1 1 1 | 4
+1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 8
 
 RREF matrix:
- 1  1  0  0  0  0  0  0  0  0  0  0  0  0  0  1  1  1  0  0 |  1
- 0  0  1  1  0  0  0  1  1  0  0  1  1  0  0  0  0  0  1  1 |  4
- 0  0  0  0  1  1  1  0  0  0  0  0  0  0  0 -1 -1 -1  0  0 |  1
- 0  0  0  0  0  0  0  0  0  1  0 -1 -1  1  0  1  1  0 -1 -1 | -1
- 0  0  0  0  0  0  0  0  0  0  1  1  1  0  1  0  0  1  1  1 |  3
+ 1  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  1  1  0  0 |  1
+ 0  0  1  1  0  0  0  1  1  0  0  1  1  0  0  1  0  0  0  1  1 |  4
+ 0  0  0  0  1  1  1  0  0  0  0  0  0  0  0  0 -1 -1 -1  0  0 |  1
+ 0  0  0  0  0  0  0  0  0  1  0 -1 -1  1  0 -1  1  1  0 -1 -1 | -2
+ 0  0  0  0  0  0  0  0  0  0  1  1  1  0  1  1  0  0  1  1  1 |  4
 ```
 
 
 ### Finding equivalence groups
 
-Note that this part of the process is not strictly necessary, but does provide some insight into the board structure, and can serve as an optimisation. It does involve a bit of careful bookkeeping though, so may be worth omitting from early implementations.
+Note that this part of the process is not strictly necessary, but does provide some insight into the board structure, and can serve as an optimisation. It does involve a bit of careful bookkeeping though.
 
 When using the matrix approach this is as simple as finding identical columns - these correspond to unclicked cells that are in the same equivalence group, and they can be collapsed into a single column. In this case each column of the resulting matrix corresponds to a group (which in turn corresponds to a number of cells).
 
 Example:
+
 ```
 Board:
 # 2 # # #
 # # # # #
 # 3 # # #
-# 2 # 4 *
+# 2 # 4 #
 # # # # #
 
 Matrix:
 1 0 1 0 0 0 0 0 | 2
 0 0 1 1 1 0 0 0 | 3
 0 0 0 1 1 0 1 1 | 2
-0 0 0 0 1 1 0 1 | 3
+0 0 0 0 1 1 0 1 | 4
 1 1 1 1 1 1 1 1 | 8
 
 RREF matrix:
  1  0  0  0  0  0  1  1 |  1
  0  1  0  0  0  1  0  0 |  4
  0  0  1  0  0  0 -1 -1 |  1
- 0  0  0  1  0 -1  1  0 | -1
- 0  0  0  0  1  1  0  1 |  3
+ 0  0  0  1  0 -1  1  0 | -2
+ 0  0  0  0  1  1  0  1 |  4
 
 Groups (<group number>: <unclicked cell numbers>):
 1: 1, 2
 2: 3, 4, 8, 9   <- This is the 'outer' group, not next to any numbers
 3: 5, 6, 7
 4: 10, 14
-5: 11, 15
-6: 12, 13, 19, 20
-7: 16, 17
-8: 18
+5: 11, 16
+6: 12, 13, 15, 20, 21
+7: 17, 18
+8: 19
 ```
 
 
 ### Finding mine configurations
 
-TODO
+As mentioned above, this just comes down to finding all non-negative integer solutions to the matrix equation (also bounded by maximum mines per cell).
+
+For matrix equations over the real numbers there are three possibilities, which can immediately be determined when the matrix is in RREF.
+- One unique solution - after removing any zero-rows, the LHS of the RREF matrix is a square identity matrix, and the solution can be trivially read off.
+- No solutions - there is at least one row with all zeros on the LHS and a non-zero value on the RHS.
+- Infinite solutions - there are no rows with all zeros on the LHS and a non-zero value on the RHS, and there are less non-zero rows than there are columns.
+
+These rules are still useful for determining constrained integer solutions, although extra consideration is needed. Turning around the cases above:
+- After removing any zero-rows, the LHS of the RREF matrix is a square identity matrix - the unique potential solution can be read off and checked against the bound constraints (e.g. all values must be non-negative).
+- There is at least one row with all zeros on the LHS and a non-zero value on the RHS - invalid board (no solutions).
+- There are no rows with all zeros on the LHS and a non-zero value on the RHS, and there are less non-zero rows than there are columns - further work is needed to find valid solutions.
+
+In most cases we expect a minesweeper board to fall into the latter case. We discuss the process for finding solutions in this case below.
+
+Any zero-rows can be removed - these correspond to there being multiple displayed board numbers that provide exactly the same information, i.e. redundant information.
+
+Columns of the RREF matrix can be classified into two cases:
+- A column that contains a leading-edge entry (i.e. the first non-zero value in a row, with all other values in the column being zero) - we say these columns correspond to 'fixed' variables.
+- Otherwise (if there are multiple non-zero values in the column, or if the non-zero value is not a leading-edge entry) the column corresponds to a 'free' variable.
+
+The purpose of this is that you can write solutions for all fixed variables in terms of the free variables. For example, using the RREF matrix above, with the columns corresponding to groups `g1`, `g2`, ...:
+```
+ 1  0  0  0  0  0  1  1 |  1
+ 0  1  0  0  0  1  0  0 |  4
+ 0  0  1  0  0  0 -1 -1 |  1
+ 0  0  0  1  0 -1  1  0 | -2
+ 0  0  0  0  1  1  0  1 |  4
+
+Fixed variables: g1, g2, g3, g4, g5
+Free variables: g6, g7, g8
+
+g1 =  1 - g7 - g8
+g2 =  4 - g6
+g3 =  1 + g7 + g8
+g4 = -2 + g6 - g7
+g5 =  4 - g6 - g8
+```
+
+The problem then becomes a matter of finding all valid values for the free variables, with the constraint being: `0 <= g<n> <= |G<n>| * <max mines per cell>`, where `g<n>` is the number of mines in the n'th group and `|G<n>|` is the size of the n'th group.
+
+A basic approach is to start with the free variables at 0, and increase them until any of the fixed variable values become invalid (or the max for the free variable is reached). Note that in practice it is more common for the non-negative constraint to be stronger when the maximum number of mines per cell is greater than 1. If we use the fact that the fixed variables are non-negative, we can write down an inequality from the above equations:
+```
+| g1 |   | 1 |   |  0  1  1 |             | 0 |
+| g2 |   | 4 |   |  1  0  0 |   | g6 |    | 0 |
+| g3 | = | 1 | - |  0 -1 -1 | . | g7 | >= | 0 |
+| g4 |   | 0 |   | -1  1  0 |   | g8 |    | 0 |
+| g5 |   | 3 |   |  1  0  1 |             | 0 |
+
+|  0  1  1 |             |  1 |
+|  1  0  0 |   | g6 |    |  4 |
+|  0 -1 -1 | . | g7 | <= |  1 |
+| -1  1  0 |   | g8 |    | -2 |
+|  1  0  1 |             |  4 |
+```
+
+This can be used to check whether values chosen for the free variables are potential solutions, but we can also use it to set some tigher upper bounds on the free variables, using only the non-negativity property of all of the variables.
+
+All of the rows that contain no negative values give bounds when you consider that the free variables are non-negative:
+```
+Row 1: g7 + g8 <= 1  =>  g7 <= 1, g8 <= 1
+Row 2: g6 <= 4
+Row 5: g6 + g8 <= 4  =>  g6 <= 4, g8 <= 4
+```
+
+At this point we have the following intervals to consider (assuming max per cell is not a limiting factor - this can be applied as an additional constraint without much difficulty if needed):
+```
+0 <= g6 <= 4
+0 <= g7 <= 1
+0 <= g8 <= 1
+```
+
+This gives a total of `5*2*2=20` possibilities to check, whereas without narrowing down in this way, even if the max mines per cell was 1, there would be `6*3*2=36` possibilities to check.
+
+It turns out that there are 7 valid mine configurations in this example:
+```
+(1, 2, 1, 0, 2, 2, 0, 0)
+(1, 1, 1, 1, 1, 3, 0, 0)
+(1, 0, 1, 2, 0, 4, 0, 0)
+(0, 2, 2, 0, 1, 2, 0, 1)
+(0, 1, 2, 1, 0, 3, 0, 1)
+(0, 1, 2, 0, 1, 3, 1, 0)
+(0, 0, 2, 1, 0, 4, 1, 0)
+```
 
 
 ### Calculating the probabilities
