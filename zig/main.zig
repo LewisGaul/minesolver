@@ -111,15 +111,16 @@ fn Grid(comptime T: type) type {
         data: [][]T,
 
         const Self = @This();
-        const Entry = struct { x: u8, y: u8, value: T };
+        const Entry = struct { x: usize, y: usize, value: T };
 
         /// Iterator for iterating over cells in index order.
         const Iterator = struct {
             grid: Self,
-            idx: u8 = 0,
+            idx: usize = 0,
 
             pub fn next(it: *@This()) ?Entry {
-                if (it.idx >= it.grid.xSize() * it.grid.ySize()) return null;
+                if (it.idx >= it.grid.xSize() * it.grid.ySize())
+                    return null;
                 const x = it.idx % it.grid.xSize();
                 const y = @divFloor(it.idx, it.grid.xSize());
                 const entry = Entry{
@@ -133,7 +134,7 @@ fn Grid(comptime T: type) type {
         };
 
         /// Allocates memory to copy the data, free by calling 'Grid.deinit()'.
-        pub fn fromFlatSlice(x_size: u8, y_size: u8, cells: []const T) !Self {
+        pub fn fromFlatSlice(x_size: usize, y_size: usize, cells: []const T) !Self {
             if (cells.len != x_size * y_size or cells.len == 0)
                 return error.InvalidNumberOfCells;
             const rows: [][]T = try allocator.alloc([]T, y_size);
@@ -158,29 +159,29 @@ fn Grid(comptime T: type) type {
             allocator.free(g.data);
         }
 
-        pub fn xSize(g: Self) u8 {
-            return std.math.cast(u8, g.data[0].len) catch unreachable;
+        pub fn xSize(g: Self) usize {
+            return g.data[0].len;
         }
 
-        pub fn ySize(g: Self) u8 {
-            return std.math.cast(u8, g.data.len) catch unreachable;
+        pub fn ySize(g: Self) usize {
+            return g.data.len;
         }
 
         /// The 'x' and 'y' arguments must be in range of the grid bounds, as
         /// given by 'Grid.xSize()' and 'Grid.ySize()'.
-        pub fn getCell(g: Self, x: u8, y: u8) T {
+        pub fn getCell(g: Self, x: usize, y: usize) T {
             return g.data[y][x];
         }
 
         /// The 'idx' argument must be in range of the grid bounds, as given by
         /// 'Grid.ySize()'.
-        pub fn getRow(g: Self, idx: u8) []const T {
+        pub fn getRow(g: Self, idx: usize) []const T {
             return g.data[idx];
         }
 
         /// The 'idx' argument must be in range of the grid bounds, as given by
         /// 'Grid.xSize()'.
-        pub fn getColumn(g: Self, idx: u8) ![]const T {
+        pub fn getColumn(g: Self, idx: usize) ![]const T {
             var list = ArrayList(T).init(allocator);
             defer list.deinit();
             try list.ensureTotalCapacity(g.xSize());
@@ -200,7 +201,7 @@ fn Grid(comptime T: type) type {
             return c;
         }
 
-        pub fn toStr(g: Self, opts: struct { sep_idx: ?u8 = null }) ![]const u8 {
+        pub fn toStr(g: Self, opts: struct { sep_idx: ?usize = null }) ![]const u8 {
             // Find the max cell width.
             var max_width: u64 = 0;
             var iter = g.iterator();
@@ -236,11 +237,11 @@ fn Grid(comptime T: type) type {
         }
 
         /// Allocates the slice - memory owned by the caller.
-        pub fn getNeighbours(g: Self, x: u8, y: u8) ![]const Entry {
-            var x_min: u8 = x;
-            var x_max: u8 = x;
-            var y_min: u8 = y;
-            var y_max: u8 = y;
+        pub fn getNeighbours(g: Self, x: usize, y: usize) ![]const Entry {
+            var x_min: usize = x;
+            var x_max: usize = x;
+            var y_min: usize = y;
+            var y_max: usize = y;
             if (x > 0) x_min -= 1;
             if (x < g.xSize() - 1) x_max += 1;
             if (y > 0) y_min -= 1;
@@ -248,8 +249,8 @@ fn Grid(comptime T: type) type {
             const num_nbrs = (x_max - x_min + 1) * (y_max - y_min + 1) - 1;
             var nbrs = ArrayList(Entry).init(allocator);
             try nbrs.ensureTotalCapacity(num_nbrs);
-            var i: u8 = x_min;
-            var j: u8 = y_min;
+            var i: usize = x_min;
+            var j: usize = y_min;
             while (i <= x_max) : (i += 1) {
                 while (j <= y_max) : (j += 1) {
                     if (i == x and j == y) continue;
@@ -272,7 +273,12 @@ const Matrix = struct {
         return Self{ .grid = try Grid(isize).fromOwnedData(cells) };
     }
 
-    pub fn fromFlatSlice(comptime T: type, x_size: u8, y_size: u8, cells: []const T) !Self {
+    pub fn fromFlatSlice(
+        comptime T: type,
+        x_size: usize,
+        y_size: usize,
+        cells: []const T,
+    ) !Self {
         if (cells.len != x_size * y_size or cells.len == 0)
             return error.InvalidNumberOfCells;
         // TODO: Failing to free memory on error.
@@ -289,13 +295,13 @@ const Matrix = struct {
     }
 
     /// Return a new matrix containing selected columns from the current matrix.
-    pub fn selectColumns(self: Self, col_idxs: []const u8) !Self {
+    pub fn selectColumns(self: Self, col_idxs: []const usize) !Self {
         // TODO: Free memory on error.
         const rows = try allocator.alloc([]isize, self.ySize());
         for (rows) |*row, y| {
             row.* = try allocator.alloc(isize, col_idxs.len);
             for (row.*) |*cell, x| {
-                cell.* = self.getCell(col_idxs[x], @intCast(u8, y));
+                cell.* = self.getCell(col_idxs[x], y);
             }
         }
         return Self{ .grid = Grid(isize){ .data = rows } };
@@ -334,33 +340,33 @@ const Matrix = struct {
         self.grid.deinit();
     }
 
-    pub fn xSize(self: Self) u8 {
+    pub fn xSize(self: Self) usize {
         return self.grid.xSize();
     }
 
-    pub fn ySize(self: Self) u8 {
+    pub fn ySize(self: Self) usize {
         return self.grid.ySize();
     }
 
     /// The 'x' and 'y' arguments must be in range of the grid bounds, as
     /// given by 'xSize()' and 'ySize()'.
-    pub fn getCell(self: Self, x: u8, y: u8) isize {
+    pub fn getCell(self: Self, x: usize, y: usize) isize {
         return self.grid.getCell(x, y);
     }
 
     /// The 'idx' argument must be in range of the grid bounds, as given by
     /// 'ySize()'.
-    pub fn getRow(self: Self, idx: u8) []const isize {
+    pub fn getRow(self: Self, idx: usize) []const isize {
         return self.grid.getRow(idx);
     }
 
     /// The 'idx' argument must be in range of the grid bounds, as given by
     /// 'xSize()'.
-    pub fn getColumn(self: Self, idx: u8) ![]const isize {
+    pub fn getColumn(self: Self, idx: usize) ![]const isize {
         return self.grid.getColumn(idx);
     }
 
-    pub fn toStr(self: Self, opts: struct { sep_idx: ?u8 = null }) ![]const u8 {
+    pub fn toStr(self: Self, opts: struct { sep_idx: ?usize = null }) ![]const u8 {
         return self.grid.toStr(.{ .sep_idx = opts.sep_idx });
     }
 
@@ -374,7 +380,7 @@ const Matrix = struct {
         var new_matrix = try self.copy();
         for (new_matrix.grid.data) |row, y| {
             for (row) |*cell, x| {
-                cell.* += other.getCell(@intCast(u8, x), @intCast(u8, y));
+                cell.* += other.getCell(x, y);
             }
         }
         return new_matrix;
@@ -385,7 +391,7 @@ const Matrix = struct {
         var new_matrix = try self.copy();
         for (new_matrix.grid.data) |row, y| {
             for (row) |*cell, x| {
-                cell.* -= other.getCell(@intCast(u8, x), @intCast(u8, y));
+                cell.* -= other.getCell(x, y);
             }
         }
         return new_matrix;
@@ -413,8 +419,8 @@ const Matrix = struct {
 
     /// Convert in-place to Reduced-Row-Echelon-Form.
     pub fn rref(self: *Self) void {
-        var row_idx: u8 = 0;
-        var col_idx: u8 = 0;
+        var row_idx: usize = 0;
+        var col_idx: usize = 0;
         while (col_idx < self.xSize()) : (col_idx += 1) {
             std.log.debug("Column {d}, row {d}:\n{s}", .{ col_idx, row_idx, self.toStr(.{}) catch unreachable });
             if (self.findNonZeroRowInColumn(col_idx, row_idx)) |non_zero_row_idx| {
@@ -436,7 +442,7 @@ const Matrix = struct {
             assert(self.getCell(col_idx, row_idx) > 0);
             const pivot_val = @intCast(usize, self.getCell(col_idx, row_idx));
 
-            var inner_row_idx: u8 = 0;
+            var inner_row_idx: usize = 0;
             while (inner_row_idx < self.ySize()) : (inner_row_idx += 1) {
                 if (row_idx == inner_row_idx) continue;
                 if (self.getCell(col_idx, inner_row_idx) == 0) continue;
@@ -475,8 +481,8 @@ const Matrix = struct {
 
     /// Find the first non-zero value in the specified column, returning the row
     /// index.
-    fn findNonZeroRowInColumn(self: Self, col_idx: u8, start_row_idx: u8) ?u8 {
-        var row_idx: u8 = start_row_idx;
+    fn findNonZeroRowInColumn(self: Self, col_idx: usize, start_row_idx: usize) ?usize {
+        var row_idx: usize = start_row_idx;
         while (row_idx < self.ySize()) : (row_idx += 1) {
             if (self.getCell(col_idx, row_idx) != 0) return row_idx;
         }
@@ -484,20 +490,20 @@ const Matrix = struct {
     }
 
     /// Swap the two rows with the given indexes.
-    fn swapRows(self: *Self, row1_idx: u8, row2_idx: u8) void {
+    fn swapRows(self: *Self, row1_idx: usize, row2_idx: usize) void {
         const row1 = self.grid.data[row1_idx];
         const row2 = self.grid.data[row2_idx];
         self.grid.data[row1_idx] = row2;
         self.grid.data[row2_idx] = row1;
     }
 
-    fn negateRow(self: *Self, row_idx: u8) void {
+    fn negateRow(self: *Self, row_idx: usize) void {
         for (self.grid.data[row_idx]) |*cell| {
             cell.* *= -1;
         }
     }
 
-    fn multiplyRow(self: *Self, row_idx: u8, factor: usize) void {
+    fn multiplyRow(self: *Self, row_idx: usize, factor: usize) void {
         if (factor == 1) return;
         for (self.grid.data[row_idx]) |*cell| {
             // TODO: Dodgy int casts...
@@ -505,15 +511,15 @@ const Matrix = struct {
         }
     }
 
-    fn addRow(self: *Self, row_idx: u8, add_row_idx: u8) void {
+    fn addRow(self: *Self, row_idx: usize, add_row_idx: usize) void {
         for (self.grid.data[row_idx]) |*cell, col_idx| {
-            cell.* += self.getCell(@intCast(u8, col_idx), add_row_idx);
+            cell.* += self.getCell(col_idx, add_row_idx);
         }
     }
 
-    fn subtractRow(self: *Self, row_idx: u8, sub_row_idx: u8) void {
+    fn subtractRow(self: *Self, row_idx: usize, sub_row_idx: usize) void {
         for (self.grid.data[row_idx]) |*cell, col_idx| {
-            cell.* -= self.getCell(@intCast(u8, col_idx), sub_row_idx);
+            cell.* -= self.getCell(col_idx, sub_row_idx);
         }
     }
 };
@@ -526,7 +532,7 @@ const Board = struct {
 
     /// Allocates memory, but also reuses the provided memory storing the
     /// 'cells' slice, which must all be managed by caller.
-    pub fn fromFlatSlice(x_size: u8, y_size: u8, cells: []CellContents, mines: u16) !Self {
+    pub fn fromFlatSlice(x_size: usize, y_size: usize, cells: []CellContents, mines: u16) !Self {
         return Self{
             .grid = try Grid(CellContents).fromFlatSlice(x_size, y_size, cells),
             .mines = mines,
@@ -537,11 +543,11 @@ const Board = struct {
         self.grid.deinit();
     }
 
-    pub fn xSize(self: Self) u8 {
+    pub fn xSize(self: Self) usize {
         return self.grid.xSize();
     }
 
-    pub fn ySize(self: Self) u8 {
+    pub fn ySize(self: Self) usize {
         return self.grid.ySize();
     }
 
@@ -567,16 +573,16 @@ const Board = struct {
         const rows: [][]isize = try allocator.alloc([]isize, num_rows);
         const all_matrix_cells: []isize = try allocator.alloc(isize, num_columns * num_rows);
 
-        var j: u8 = 0; // Matrix row index
+        var j: usize = 0; // Matrix row index
         var iter1 = self.grid.iterator();
         // Iterate over the numbers in the board, which correspond to the rows of
         // the matrix.
         while (iter1.next()) |num_entry| {
             if (num_entry.value != .Number) continue;
             const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
-            var i: u8 = 0; // Matrix column index
+            var i: usize = 0; // Matrix column index
             var iter2 = self.grid.iterator();
-            var nbr_mines: u8 = 0;
+            var nbr_mines: usize = 0;
             while (iter2.next()) |nbr_entry| {
                 const is_nbr_x = absDifference(nbr_entry.x, num_entry.x) <= 1;
                 const is_nbr_y = absDifference(nbr_entry.y, num_entry.y) <= 1;
@@ -594,14 +600,15 @@ const Board = struct {
             }
             assert(i == num_columns - 1);
             // Add the final column value - the RHS of the equation.
-            row[i] = num_entry.value.Number - nbr_mines;
+            if (num_entry.value.Number < nbr_mines) return error.TooManyMinesAroundNumber;
+            row[i] = num_entry.value.Number - @intCast(isize, nbr_mines);
             rows[j] = row;
             j += 1;
         }
         assert(j == num_rows - 1);
 
         // Add the final row on the end, corresponding to the total number of mines.
-        var i: u8 = 0;
+        var i: usize = 0;
         const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
         while (i < num_columns - 1) : (i += 1) {
             row[i] = 1;
@@ -614,16 +621,16 @@ const Board = struct {
 };
 
 const RectangularIterator = struct {
-    max_vals: []u8,
+    max_vals: []u16,
     idx: usize = 0,
 
-    pub fn next(self: *@This()) !?[]const u8 {
+    pub fn next(self: *@This()) !?[]const u16 {
         if (self.idx >= self.size()) return null;
         defer self.idx += 1;
-        const result = try allocator.alloc(u8, self.max_vals.len);
+        const result = try allocator.alloc(u16, self.max_vals.len);
         var counter: usize = 1;
         for (self.max_vals) |val, i| {
-            result[i] = @intCast(u8, (self.idx / counter) % (val + 1));
+            result[i] = @intCast(u16, (self.idx / counter) % (val + 1));
             counter *= val + 1;
         }
         return result;
@@ -642,7 +649,7 @@ const Solver = struct {
     board: Board,
     per_cell: u8,
     /// Each inner slice contains indexes to grid positions.
-    groups: []const []const u8,
+    groups: []const []const usize,
     matrix: Matrix,
 
     const Self = @This();
@@ -695,7 +702,7 @@ const Solver = struct {
 
         // TODO: Check for inconsistent rows - all-zero LHS, non-zero RHS.
 
-        const rhs_matrix = try self.matrix.selectColumns(&[_]u8 {self.matrix.xSize() - 1});
+        const rhs_matrix = try self.matrix.selectColumns(&[_]usize{self.matrix.xSize() - 1});
         const col_categorisation = try self.categoriseColumns();
         const fixed_col_idxs = col_categorisation.fixed;
         const free_col_idxs = col_categorisation.free;
@@ -705,20 +712,20 @@ const Solver = struct {
 
         const free_var_matrix = try self.matrix.selectColumns(free_col_idxs);
 
-        const max_free_vals = try allocator.alloc(u8, free_col_idxs.len);
+        const max_free_vals = try allocator.alloc(u16, free_col_idxs.len);
         // TODO: Improve this.
         // To start with, just iterate over the full range for each group, i.e.
         // 0 to the size of the group multiplied by max per cell.
         for (max_free_vals) |*val, i| {
-            val.* = self.per_cell * @intCast(u8, self.groups[free_col_idxs[i]].len);
+            val.* = @intCast(u16, self.groups[free_col_idxs[i]].len) * self.per_cell;
         }
         var iter = RectangularIterator{ .max_vals = max_free_vals };
         while (try iter.next()) |free_vals| {
             defer allocator.free(free_vals);
             const free_var_vec = try Matrix.fromFlatSlice(
-                u8,
+                u16,
                 1,
-                @intCast(u8, free_vals.len),
+                free_vals.len,
                 free_vals,
             );
             defer free_var_vec.deinit();
@@ -745,10 +752,10 @@ const Solver = struct {
             errdefer allocator.free(config);
 
             for (fixed_col_idxs) |grp_idx, fixed_col_idx| {
-                config[grp_idx] = @intCast(u16, fixed_var_vec.getCell(0, @intCast(u8, fixed_col_idx)));
+                config[grp_idx] = @intCast(u16, fixed_var_vec.getCell(0, fixed_col_idx));
             }
             for (free_col_idxs) |grp_idx, free_col_idx| {
-                config[grp_idx] = @intCast(u16, free_var_vec.getCell(0, @intCast(u8, free_col_idx)));
+                config[grp_idx] = @intCast(u16, free_var_vec.getCell(0, free_col_idx));
             }
             try configs.append(config);
         }
@@ -757,26 +764,26 @@ const Solver = struct {
     }
 
     fn reduceToGroups(self: *Self) !void {
-        var groups = ArrayList([]const u8).init(allocator);
+        var groups = ArrayList([]const usize).init(allocator);
         defer groups.deinit();
 
         // Indexes of columns to remove.
-        var remove_columns = ArrayList(u8).init(allocator);
+        var remove_columns = ArrayList(usize).init(allocator);
         defer remove_columns.deinit();
 
         // Iterate over columns to find groups.
-        var x1: u8 = 0;
+        var x1: usize = 0;
         while (x1 < self.matrix.xSize() - 2) : (x1 += 1) {
             // If already included in a group, skip over this column.
-            if (std.mem.indexOfScalar(u8, remove_columns.items, x1)) |_| continue;
+            if (std.mem.indexOfScalar(usize, remove_columns.items, x1)) |_| continue;
 
             const column1 = try self.matrix.getColumn(x1);
 
-            var group = ArrayList(u8).init(allocator);
+            var group = ArrayList(usize).init(allocator);
             defer group.deinit();
             try group.append(x1);
 
-            var x2: u8 = x1 + 1;
+            var x2: usize = x1 + 1;
             while (x2 < self.matrix.xSize() - 1) : (x2 += 1) {
                 const column2 = try self.matrix.getColumn(x2);
                 if (std.mem.eql(isize, column1, column2)) {
@@ -787,7 +794,7 @@ const Solver = struct {
             try groups.append(group.toOwnedSlice());
         }
 
-        const new_x_size = self.matrix.xSize() - @intCast(u8, remove_columns.items.len);
+        const new_x_size = self.matrix.xSize() - remove_columns.items.len;
         const y_size = self.matrix.ySize();
 
         var new_matrix_cells = ArrayList(isize).init(allocator);
@@ -796,7 +803,7 @@ const Solver = struct {
 
         var iter = self.matrix.grid.iterator();
         while (iter.next()) |entry| {
-            if (std.mem.indexOfScalar(u8, remove_columns.items, entry.x)) |_| continue;
+            if (std.mem.indexOfScalar(usize, remove_columns.items, entry.x)) |_| continue;
             new_matrix_cells.appendAssumeCapacity(entry.value);
         }
 
@@ -810,16 +817,16 @@ const Solver = struct {
         );
     }
 
-    const ColumnCategorisation = struct { fixed: []const u8, free: []const u8 };
+    const ColumnCategorisation = struct { fixed: []const usize, free: []const usize };
 
     fn categoriseColumns(self: Self) !ColumnCategorisation {
-        var fixed_cols = ArrayList(u8).init(allocator);
+        var fixed_cols = ArrayList(usize).init(allocator);
         defer fixed_cols.deinit();
-        var free_cols = ArrayList(u8).init(allocator);
+        var free_cols = ArrayList(usize).init(allocator);
         defer free_cols.deinit();
 
-        var x: u8 = 0;
-        var y: u8 = 0;
+        var x: usize = 0;
+        var y: usize = 0;
         while (y < self.matrix.ySize()) : (y += 1) {
             while (x < self.matrix.xSize() - 1) : (x += 1) {
                 if (self.matrix.getCell(x, y) == 0) {
@@ -1092,23 +1099,23 @@ test "Matrix multiply" {
 
 test "Rectangular iterator" {
     allocator = std.testing.allocator;
-    var max_vals = [_]u8{ 2, 0, 1 };
+    var max_vals = [_]u16{ 2, 0, 1 };
     var iter = RectangularIterator{ .max_vals = &max_vals };
     try std.testing.expectEqual(@as(usize, 6), iter.size());
 
-    const expected_vals_array = [_][]const u8{
-        &[_]u8{ 0, 0, 0 },
-        &[_]u8{ 1, 0, 0 },
-        &[_]u8{ 2, 0, 0 },
-        &[_]u8{ 0, 0, 1 },
-        &[_]u8{ 1, 0, 1 },
-        &[_]u8{ 2, 0, 1 },
+    const expected_vals_array = [_][]const u16{
+        &[_]u16{ 0, 0, 0 },
+        &[_]u16{ 1, 0, 0 },
+        &[_]u16{ 2, 0, 0 },
+        &[_]u16{ 0, 0, 1 },
+        &[_]u16{ 1, 0, 1 },
+        &[_]u16{ 2, 0, 1 },
     };
     for (expected_vals_array) |exp_vals| {
         if (try iter.next()) |vals| {
-            try std.testing.expectEqualSlices(u8, exp_vals, vals);
+            try std.testing.expectEqualSlices(u16, exp_vals, vals);
             allocator.free(vals);
         } else return error.ExpectedIteratorItem;
     }
-    try std.testing.expectEqual(@as(?[]const u8, null), try iter.next());
+    try std.testing.expectEqual(@as(?[]const u16, null), try iter.next());
 }
