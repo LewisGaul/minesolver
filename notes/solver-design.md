@@ -129,11 +129,11 @@ The problem then becomes a matter of finding all valid values for the free varia
 
 A basic approach is to start with the free variables at 0, and increase them until any of the fixed variable values become invalid (or the max for the free variable is reached). Note that in practice it is more common for the non-negative constraint to be stronger when the maximum number of mines per cell is greater than 1. If we use the fact that the fixed variables are non-negative, we can write down an inequality from the above equations:
 ```
-| g1 |   | 1 |   |  0  1  1 |             | 0 |
-| g2 |   | 4 |   |  1  0  0 |   | g6 |    | 0 |
-| g3 | = | 1 | - |  0 -1 -1 | . | g7 | >= | 0 |
-| g4 |   | 0 |   | -1  1  0 |   | g8 |    | 0 |
-| g5 |   | 3 |   |  1  0  1 |             | 0 |
+| g1 |   |  1 |   |  0  1  1 |             | 0 |
+| g2 |   |  4 |   |  1  0  0 |   | g6 |    | 0 |
+| g3 | = |  1 | - |  0 -1 -1 | . | g7 | >= | 0 |
+| g4 |   | -2 |   | -1  1  0 |   | g8 |    | 0 |
+| g5 |   |  4 |   |  1  0  1 |             | 0 |
 
 |  0  1  1 |             |  1 |
 |  1  0  0 |   | g6 |    |  4 |
@@ -165,10 +165,10 @@ It turns out that there are 7 valid mine configurations in this example:
 (1, 2, 1, 0, 2, 2, 0, 0)
 (1, 1, 1, 1, 1, 3, 0, 0)
 (1, 0, 1, 2, 0, 4, 0, 0)
-(0, 2, 2, 0, 1, 2, 0, 1)
-(0, 1, 2, 1, 0, 3, 0, 1)
 (0, 1, 2, 0, 1, 3, 1, 0)
 (0, 0, 2, 1, 0, 4, 1, 0)
+(0, 2, 2, 0, 1, 2, 0, 1)
+(0, 1, 2, 1, 0, 3, 0, 1)
 ```
 
 

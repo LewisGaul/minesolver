@@ -26,7 +26,7 @@ const assert = std.debug.assert;
 
 pub const log_level = .info;
 
-var allocator: *Allocator = undefined;
+var allocator: *Allocator = std.heap.page_allocator;
 
 const stderr = std.io.getStdErr().writer();
 
@@ -100,7 +100,7 @@ const CellContents = union(enum) {
     }
 };
 
-/// Generic square grid type.
+/// Generic rectangular grid type.
 ///
 /// Indexed as follows:
 ///   0 1 2 3
@@ -228,7 +228,7 @@ fn Grid(comptime T: type) type {
 
         /// Make a shallow copy of the grid - memory owned by the caller.
         pub fn copy(g: Self) !Self {
-            return g.fromOwnedData(g.data);
+            return Self.fromOwnedData(g.data);
         }
 
         pub fn iterator(g: Self) Iterator {
@@ -272,6 +272,35 @@ const Matrix = struct {
         return Self{ .grid = try Grid(isize).fromOwnedData(cells) };
     }
 
+    pub fn fromFlatSlice(comptime T: type, x_size: u8, y_size: u8, cells: []const T) !Self {
+        if (cells.len != x_size * y_size or cells.len == 0)
+            return error.InvalidNumberOfCells;
+        // TODO: Failing to free memory on error.
+        const rows = try allocator.alloc([]isize, y_size);
+        for (rows) |*row, y| {
+            row.* = try allocator.alloc(isize, x_size);
+            for (row.*) |*cell, x| {
+                cell.* = cells[y * x_size + x];
+            }
+        }
+        return Self{
+            .grid = Grid(isize){ .data = rows },
+        };
+    }
+
+    /// Return a new matrix containing selected columns from the current matrix.
+    pub fn selectColumns(self: Self, col_idxs: []const u8) !Self {
+        // TODO: Free memory on error.
+        const rows = try allocator.alloc([]isize, self.ySize());
+        for (rows) |*row, y| {
+            row.* = try allocator.alloc(isize, col_idxs.len);
+            for (row.*) |*cell, x| {
+                cell.* = self.getCell(col_idxs[x], @intCast(u8, y));
+            }
+        }
+        return Self{ .grid = Grid(isize){ .data = rows } };
+    }
+
     pub fn fromStr(input: []const u8) !Self {
         var rows = ArrayList([]isize).init(allocator);
         defer rows.deinit();
@@ -298,7 +327,7 @@ const Matrix = struct {
         }
         if (first_line_cols == null) return error.EmptyInput;
 
-        return Self{.grid = Grid(isize){.data = rows.toOwnedSlice()}};
+        return Self{ .grid = Grid(isize){ .data = rows.toOwnedSlice() } };
     }
 
     pub fn deinit(self: Self) void {
@@ -340,6 +369,28 @@ const Matrix = struct {
         return Self{ .grid = try self.grid.copy() };
     }
 
+    pub fn matrixAdd(self: Self, other: Self) !Self {
+        assert(self.xSize() == other.xSize() and self.ySize() == other.ySize());
+        var new_matrix = try self.copy();
+        for (new_matrix.grid.data) |row, y| {
+            for (row) |*cell, x| {
+                cell.* += other.getCell(@intCast(u8, x), @intCast(u8, y));
+            }
+        }
+        return new_matrix;
+    }
+
+    pub fn matrixSubtract(self: Self, other: Self) !Self {
+        assert(self.xSize() == other.xSize() and self.ySize() == other.ySize());
+        var new_matrix = try self.copy();
+        for (new_matrix.grid.data) |row, y| {
+            for (row) |*cell, x| {
+                cell.* -= other.getCell(@intCast(u8, x), @intCast(u8, y));
+            }
+        }
+        return new_matrix;
+    }
+
     pub fn matrixMultiply(self: Self, other: Self) !Self {
         assert(self.xSize() == other.ySize());
         const new_rows = try allocator.alloc([]isize, self.ySize());
@@ -357,7 +408,7 @@ const Matrix = struct {
             }
             y += 1;
         }
-        return Self{.grid = Grid(isize){.data = new_rows}};
+        return Self{ .grid = Grid(isize){ .data = new_rows } };
     }
 
     /// Convert in-place to Reduced-Row-Echelon-Form.
@@ -562,6 +613,31 @@ const Board = struct {
     }
 };
 
+const RectangularIterator = struct {
+    max_vals: []u8,
+    idx: usize = 0,
+
+    pub fn next(self: *@This()) !?[]const u8 {
+        if (self.idx >= self.size()) return null;
+        defer self.idx += 1;
+        const result = try allocator.alloc(u8, self.max_vals.len);
+        var counter: usize = 1;
+        for (self.max_vals) |val, i| {
+            result[i] = @intCast(u8, (self.idx / counter) % (val + 1));
+            counter *= val + 1;
+        }
+        return result;
+    }
+
+    pub fn size(self: @This()) usize {
+        var result: usize = 1;
+        for (self.max_vals) |val| {
+            result *= val + 1;
+        }
+        return result;
+    }
+};
+
 const Solver = struct {
     board: Board,
     per_cell: u8,
@@ -590,6 +666,94 @@ const Solver = struct {
             allocator.free(group);
         }
         allocator.free(self.groups);
+    }
+
+    /// Returns a slice containing valid mine configurations, which are
+    /// represented as slices of length equal to the number of groups (i.e. the
+    /// number of matrix columns), with the values being the number of mines in
+    /// the corresponding group.
+    ///
+    /// Memory owned by the caller.
+    pub fn solve(self: Self) ![]const []const u16 {
+        // We begin with a matrix in RREF, such as:
+        //   1  0  0  0  0  0  1  1 |  1
+        //   0  1  0  0  0  1  0  0 |  4
+        //   0  0  1  0  0  0 -1 -1 |  1
+        //   0  0  0  1  0 -1  1  0 | -2
+        //   0  0  0  0  1  1  0  1 |  4
+        //
+        // We need to transform this to something like:
+        //   | g1 |   |  1 |   |  0  1  1 |
+        //   | g2 |   |  4 |   |  1  0  0 |   | g6 |
+        //   | g3 | = |  1 | - |  0 -1 -1 | . | g7 |
+        //   | g4 |   | -2 |   | -1  1  0 |   | g8 |
+        //   | g5 |   |  4 |   |  1  0  1 |
+        //
+        // We then iterate over possible values for the free variables (g6, g7,
+        // g8) and matrix multiply to find the fixed variables.
+        //
+
+        // TODO: Check for inconsistent rows - all-zero LHS, non-zero RHS.
+
+        const rhs_matrix = try self.matrix.selectColumns(&[_]u8 {self.matrix.xSize() - 1});
+        const col_categorisation = try self.categoriseColumns();
+        const fixed_col_idxs = col_categorisation.fixed;
+        const free_col_idxs = col_categorisation.free;
+
+        var configs = ArrayList([]u16).init(allocator);
+        defer configs.deinit();
+
+        const free_var_matrix = try self.matrix.selectColumns(free_col_idxs);
+
+        const max_free_vals = try allocator.alloc(u8, free_col_idxs.len);
+        // TODO: Improve this.
+        // To start with, just iterate over the full range for each group, i.e.
+        // 0 to the size of the group multiplied by max per cell.
+        for (max_free_vals) |*val, i| {
+            val.* = self.per_cell * @intCast(u8, self.groups[free_col_idxs[i]].len);
+        }
+        var iter = RectangularIterator{ .max_vals = max_free_vals };
+        while (try iter.next()) |free_vals| {
+            defer allocator.free(free_vals);
+            const free_var_vec = try Matrix.fromFlatSlice(
+                u8,
+                1,
+                @intCast(u8, free_vals.len),
+                free_vals,
+            );
+            defer free_var_vec.deinit();
+
+            const fixed_var_vec = blk: {
+                const multiplied_matrix = try free_var_matrix.matrixMultiply(free_var_vec);
+                defer multiplied_matrix.deinit();
+                break :blk try rhs_matrix.matrixSubtract(multiplied_matrix);
+            };
+            defer fixed_var_vec.deinit();
+
+            var invalid = false;
+            for (fixed_var_vec.grid.data) |row, idx| {
+                if (row[0] < 0 or
+                    row[0] > self.groups[fixed_col_idxs[idx]].len * self.per_cell)
+                {
+                    invalid = true;
+                    break;
+                }
+            }
+            if (invalid) continue;
+
+            var config = try allocator.alloc(u16, self.groups.len);
+            errdefer allocator.free(config);
+
+            for (fixed_col_idxs) |grp_idx, fixed_col_idx| {
+                config[grp_idx] = @intCast(u16, fixed_var_vec.getCell(0, @intCast(u8, fixed_col_idx)));
+            }
+            for (free_col_idxs) |grp_idx, free_col_idx| {
+                config[grp_idx] = @intCast(u16, free_var_vec.getCell(0, @intCast(u8, free_col_idx)));
+            }
+            try configs.append(config);
+        }
+
+        return configs.toOwnedSlice();
     }
 
     fn reduceToGroups(self: *Self) !void {
@@ -638,8 +802,42 @@ const Solver = struct {
 
         self.groups = groups.toOwnedSlice();
         self.matrix.deinit();
-        self.matrix = Matrix{
-            .grid = try Grid(isize).fromFlatSlice(new_x_size, y_size, new_matrix_cells.toOwnedSlice()),
+        self.matrix = try Matrix.fromFlatSlice(
+            isize,
+            new_x_size,
+            y_size,
+            new_matrix_cells.toOwnedSlice(),
+        );
+    }
+
+    const ColumnCategorisation = struct { fixed: []const u8, free: []const u8 };
+
+    fn categoriseColumns(self: Self) !ColumnCategorisation {
+        var fixed_cols = ArrayList(u8).init(allocator);
+        defer fixed_cols.deinit();
+        var free_cols = ArrayList(u8).init(allocator);
+        defer free_cols.deinit();
+
+        var x: u8 = 0;
+        var y: u8 = 0;
+        while (y < self.matrix.ySize()) : (y += 1) {
+            while (x < self.matrix.xSize() - 1) : (x += 1) {
+                if (self.matrix.getCell(x, y) == 0) {
+                    try free_cols.append(x);
+                } else {
+                    try fixed_cols.append(x);
+                    x += 1;
+                    break;
+                }
+            }
+        }
+        // All remaining columns are free columns (leading '1's all found).
+        while (x < self.matrix.xSize() - 1) : (x += 1) {
+            try free_cols.append(x);
+        }
+        return ColumnCategorisation{
+            .fixed = fixed_cols.toOwnedSlice(),
+            .free = free_cols.toOwnedSlice(),
         };
     }
 };
@@ -843,6 +1041,14 @@ pub fn main() !u8 {
         std.debug.print("{d}: {d}\n", .{ i, group });
     }
 
+    std.debug.print("\n", .{});
+
+    const configs = try solver.solve();
+    std.debug.print("Mine configurations:\n", .{});
+    for (configs) |cfg, i| {
+        std.debug.print("{d}: {d}\n", .{ i, cfg });
+    }
+
     return 0;
 }
 
@@ -880,6 +1086,29 @@ test "Matrix multiply" {
     const exp_str =
         \\30 36
         \\66 81
-        ;
+    ;
     try std.testing.expectEqualStrings(exp_str, mat_str);
+}
+
+test "Rectangular iterator" {
+    allocator = std.testing.allocator;
+    var max_vals = [_]u8{ 2, 0, 1 };
+    var iter = RectangularIterator{ .max_vals = &max_vals };
+    try std.testing.expectEqual(@as(usize, 6), iter.size());
+
+    const expected_vals_array = [_][]const u8{
+        &[_]u8{ 0, 0, 0 },
+        &[_]u8{ 1, 0, 0 },
+        &[_]u8{ 2, 0, 0 },
+        &[_]u8{ 0, 0, 1 },
+        &[_]u8{ 1, 0, 1 },
+        &[_]u8{ 2, 0, 1 },
+    };
+    for (expected_vals_array) |exp_vals| {
+        if (try iter.next()) |vals| {
+            try std.testing.expectEqualSlices(u8, exp_vals, vals);
+            allocator.free(vals);
+        } else return error.ExpectedIteratorItem;
+    }
+    try std.testing.expectEqual(@as(?[]const u8, null), try iter.next());
 }
