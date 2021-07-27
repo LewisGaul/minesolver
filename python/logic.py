@@ -344,7 +344,7 @@ class Solver:
         self._configs = self._find_configs()
         if _debug:
             print(f"Configs ({len(self._configs)}):")
-            pprint([(i, c) for i, c in enumerate(self._configs)])
+            print("\n".join(f"{i}: {c}" for i, c in enumerate(self._configs)))
             print()
 
         return self._find_probs()
