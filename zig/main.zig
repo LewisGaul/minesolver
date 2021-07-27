@@ -28,6 +28,7 @@ pub const log_level = .info;
 
 var allocator: *Allocator = std.heap.page_allocator;
 
+const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
 // -----------------------------------------------------------------------------
@@ -211,7 +212,7 @@ fn Grid(comptime T: type) type {
             }
 
             var buf = ArrayList(u8).init(allocator);
-            errdefer buf.deinit();
+            defer buf.deinit();
             var writer = buf.writer();
             for (g.data) |row, y| {
                 if (y > 0) try writer.writeByte('\n');
@@ -422,7 +423,7 @@ const Matrix = struct {
         var row_idx: usize = 0;
         var col_idx: usize = 0;
         while (col_idx < self.xSize()) : (col_idx += 1) {
-            std.log.debug("Column {d}, row {d}:\n{s}", .{ col_idx, row_idx, self.toStr(.{}) catch unreachable });
+            // std.log.debug("Column {d}, row {d}:\n{s}", .{ col_idx, row_idx, self.toStr(.{}) catch unreachable });
             if (self.findNonZeroRowInColumn(col_idx, row_idx)) |non_zero_row_idx| {
                 if (row_idx != non_zero_row_idx) {
                     std.log.debug("Swapping rows {d} and {d}", .{ row_idx, non_zero_row_idx });
@@ -476,6 +477,25 @@ const Matrix = struct {
                 assert(self.getCell(col_idx, inner_row_idx) == 0);
             }
             row_idx += 1;
+        }
+    }
+
+    /// Remove all rows following the first row containing only zeros, i.e. all
+    /// zero-rows for a matrix in RREF.
+    pub fn removeTrailingZeroRows(self: *Self) void {
+        var zero_row_idx: ?usize = null;
+        for (self.grid.data) |row, y| {
+            if (std.mem.allEqual(isize, row, 0)) {
+                zero_row_idx = y;
+                break;
+            }
+        }
+        if (zero_row_idx) |idx| {
+            var y: usize = idx;
+            while (y < self.ySize()) : (y += 1) {
+                allocator.free(self.grid.data[y]);
+            }
+            self.grid.data = allocator.shrink(self.grid.data, idx);
         }
     }
 
@@ -570,8 +590,8 @@ const Board = struct {
         // corresponding to that row.
         const num_columns = self.grid.count(.Unclicked) + 1;
         const num_rows = self.grid.count(.Number) + 1;
-        const rows: [][]isize = try allocator.alloc([]isize, num_rows);
         const all_matrix_cells: []isize = try allocator.alloc(isize, num_columns * num_rows);
+        defer allocator.free(all_matrix_cells);
 
         var j: usize = 0; // Matrix row index
         var iter1 = self.grid.iterator();
@@ -602,7 +622,6 @@ const Board = struct {
             // Add the final column value - the RHS of the equation.
             if (num_entry.value.Number < nbr_mines) return error.TooManyMinesAroundNumber;
             row[i] = num_entry.value.Number - @intCast(isize, nbr_mines);
-            rows[j] = row;
             j += 1;
         }
         assert(j == num_rows - 1);
@@ -614,9 +633,8 @@ const Board = struct {
             row[i] = 1;
         }
         row[i] = self.mines;
-        rows[j] = row;
 
-        return Matrix.init(rows);
+        return Matrix.fromFlatSlice(isize, num_columns, num_rows, all_matrix_cells);
     }
 };
 
@@ -665,6 +683,7 @@ const Solver = struct {
         };
         try self.reduceToGroups();
         self.matrix.rref();
+        self.matrix.removeTrailingZeroRows();
         return self;
     }
 
@@ -673,6 +692,7 @@ const Solver = struct {
             allocator.free(group);
         }
         allocator.free(self.groups);
+        self.matrix.deinit();
     }
 
     /// Returns a slice containing valid mine configurations, which are
@@ -697,10 +717,20 @@ const Solver = struct {
         //   | g5 |   |  4 |   |  1  0  1 |
         //
         // We then iterate over possible values for the free variables (g6, g7,
-        // g8) and matrix multiply to find the fixed variables.
+        // g8) and matrix multiply to find the fixed variables, checking they're
+        // in range.
         //
 
-        // TODO: Check for inconsistent rows - all-zero LHS, non-zero RHS.
+        // Check for inconsistent matrix - row with all-zero LHS, non-zero RHS
+        // (last row in RREF with zero-rows removed).
+        {
+            const last_row = self.matrix.grid.data[self.matrix.ySize() - 1];
+            if (std.mem.allEqual(isize, last_row[0 .. self.matrix.xSize() - 1], 0) and
+                last_row[self.matrix.xSize() - 1] != 0)
+            {
+                return error.InvalidMatrixEquations;
+            }
+        }
 
         const rhs_matrix = try self.matrix.selectColumns(&[_]usize{self.matrix.xSize() - 1});
         const col_categorisation = try self.categoriseColumns();
@@ -778,6 +808,7 @@ const Solver = struct {
             if (std.mem.indexOfScalar(usize, remove_columns.items, x1)) |_| continue;
 
             const column1 = try self.matrix.getColumn(x1);
+            defer allocator.free(column1);
 
             var group = ArrayList(usize).init(allocator);
             defer group.deinit();
@@ -786,6 +817,7 @@ const Solver = struct {
             var x2: usize = x1 + 1;
             while (x2 < self.matrix.xSize() - 1) : (x2 += 1) {
                 const column2 = try self.matrix.getColumn(x2);
+                defer allocator.free(column2);
                 if (std.mem.eql(isize, column1, column2)) {
                     try remove_columns.append(x2);
                     try group.append(x2);
@@ -813,7 +845,7 @@ const Solver = struct {
             isize,
             new_x_size,
             y_size,
-            new_matrix_cells.toOwnedSlice(),
+            new_matrix_cells.items,
         );
     }
 
@@ -904,7 +936,7 @@ fn parseInputBoard(input: []const u8, mines: u16) !Board {
     return Board.fromFlatSlice(
         first_line_cols.?,
         rows,
-        cells_array.toOwnedSlice(),
+        cells_array.items,
         mines,
     );
 }
@@ -989,7 +1021,7 @@ pub fn main() !u8 {
         else => return 1,
     };
 
-    std.debug.print(
+    try stdout.print(
         "Parsed args:\nmines={d}, per_cell={d}\n",
         .{ args.mines, args.per_cell },
     );
@@ -1009,51 +1041,51 @@ pub fn main() !u8 {
         },
     };
 
-    std.debug.print("\n", .{});
+    try stdout.print("\n", .{});
 
     const board = try parseInputBoard(input, args.mines);
     defer board.deinit();
-    std.debug.print("Board:\n{s}\n", .{try board.toStr()});
+    try stdout.print("Board:\n{s}\n", .{try board.toStr()});
 
-    std.debug.print("\n", .{});
+    try stdout.print("\n", .{});
 
     var matrix = try board.toMatrix();
     defer matrix.deinit();
-    std.debug.print(
+    try stdout.print(
         "Matrix:\n{s}\n",
         .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
     );
 
-    std.debug.print("\n", .{});
+    try stdout.print("\n", .{});
 
     matrix.rref();
-    std.debug.print(
+    try stdout.print(
         "RREF matrix:\n{s}\n",
         .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
     );
 
-    std.debug.print("\n", .{});
+    try stdout.print("\n", .{});
 
     const solver = try Solver.init(board, args.per_cell);
     defer solver.deinit();
-    std.debug.print(
+    try stdout.print(
         "Solver matrix:\n{s}\n",
         .{try solver.matrix.toStr(.{ .sep_idx = solver.matrix.xSize() - 1 })},
     );
 
-    std.debug.print("\n", .{});
+    try stdout.print("\n", .{});
 
-    std.debug.print("Solver groups:\n", .{});
+    try stdout.print("Solver groups:\n", .{});
     for (solver.groups) |group, i| {
-        std.debug.print("{d}: {d}\n", .{ i, group });
+        try stdout.print("{d}: {d}\n", .{ i, group });
     }
 
-    std.debug.print("\n", .{});
+    try stdout.print("\n", .{});
 
     const configs = try solver.solve();
-    std.debug.print("Mine configurations:\n", .{});
+    try stdout.print("Mine configurations:\n", .{});
     for (configs) |cfg, i| {
-        std.debug.print("{d}: {d}\n", .{ i, cfg });
+        try stdout.print("{d}: {d}\n", .{ i, cfg });
     }
 
     return 0;
@@ -1097,6 +1129,27 @@ test "Matrix multiply" {
     try std.testing.expectEqualStrings(exp_str, mat_str);
 }
 
+test "Matrix remove trailing zero rows" {
+    allocator = std.testing.allocator;
+    var matrix = try Matrix.fromStr(
+        \\ 1 2 3
+        \\ 4 5 6
+        \\ 0 0 0
+        \\ 0 0 0
+    );
+    defer matrix.deinit();
+
+    matrix.removeTrailingZeroRows();
+
+    const mat_str = try matrix.toStr(.{});
+    defer allocator.free(mat_str);
+    const exp_str =
+        \\1 2 3
+        \\4 5 6
+    ;
+    try std.testing.expectEqualStrings(exp_str, mat_str);
+}
+
 test "Rectangular iterator" {
     allocator = std.testing.allocator;
     var max_vals = [_]u16{ 2, 0, 1 };
@@ -1118,4 +1171,18 @@ test "Rectangular iterator" {
         } else return error.ExpectedIteratorItem;
     }
     try std.testing.expectEqual(@as(?[]const u16, null), try iter.next());
+}
+
+test "Solver: invalid board" {
+    allocator = std.testing.allocator;
+    const board = try parseInputBoard(
+        \\ # 1 2
+        \\ # # #
+    , 2);
+    defer board.deinit();
+
+    const solver = try Solver.init(board, 1);
+    defer solver.deinit();
+
+    try std.testing.expectError(error.InvalidMatrixEquations, solver.solve());
 }

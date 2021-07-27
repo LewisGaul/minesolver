@@ -90,8 +90,8 @@ Groups (<group number>: <unclicked cell numbers>):
 As mentioned above, this just comes down to finding all non-negative integer solutions to the matrix equation (also bounded by maximum mines per cell).
 
 For matrix equations over the real numbers there are three possibilities, which can immediately be determined when the matrix is in RREF.
-- One unique solution - after removing any zero-rows, the LHS of the RREF matrix is a square identity matrix, and the solution can be trivially read off.
-- No solutions - there is at least one row with all zeros on the LHS and a non-zero value on the RHS.
+- One unique solution - the top of the LHS of the RREF matrix is a square identity matrix and all rows below are zero (only need to check the first row below on the RHS in RREF) - the solution can be trivially read off.
+- No solutions - there is a row with all zeros on the LHS and a non-zero value on the RHS.
 - Infinite solutions - there are no rows with all zeros on the LHS and a non-zero value on the RHS, and there are less non-zero rows than there are columns.
 
 These rules are still useful for determining constrained integer solutions, although extra consideration is needed. Turning around the cases above:
