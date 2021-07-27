@@ -639,7 +639,7 @@ const Board = struct {
 };
 
 const RectangularIterator = struct {
-    max_vals: []u16,
+    max_vals: []const u16,
     idx: usize = 0,
 
     pub fn next(self: *@This()) !?[]const u16 {
@@ -675,15 +675,26 @@ const Solver = struct {
     /// The board is still owned by the caller and should be independently
     /// deinitialised.
     pub fn init(board: Board, per_cell: u8) !Self {
+        std.log.info(
+            "Initialising solver with {d} x {d} board",
+            .{ board.xSize(), board.ySize() },
+        );
         var self = Self{
             .board = board,
             .per_cell = per_cell,
             .groups = undefined,
             .matrix = try board.toMatrix(),
         };
+        std.log.info(
+            "Initial matrix is {d} x {d}",
+            .{ self.matrix.xSize(), self.matrix.ySize() },
+        );
         try self.reduceToGroups();
+        std.log.info("Reduced matrix to groups, {d} columns", .{self.matrix.xSize()});
         self.matrix.rref();
+        std.log.info("Reduced matrix to RREF", .{});
         self.matrix.removeTrailingZeroRows();
+        std.log.info("Removed zero-rows from matrix, {d} rows", .{self.matrix.ySize()});
         return self;
     }
 
@@ -720,6 +731,14 @@ const Solver = struct {
         // g8) and matrix multiply to find the fixed variables, checking they're
         // in range.
         //
+        // These equations are subjust to g_i >= 0, which allows us to constrain
+        // the search space with e.g.:
+        //   |  0  1  1 |             |  1 |
+        //   |  1  0  0 |   | g6 |    |  4 |
+        //   |  0 -1 -1 | . | g7 | <= |  1 |
+        //   | -1  1  0 |   | g8 |    | -2 |
+        //   |  1  0  1 |             |  4 |
+        //
 
         // Check for inconsistent matrix - row with all-zero LHS, non-zero RHS
         // (last row in RREF with zero-rows removed).
@@ -751,14 +770,12 @@ const Solver = struct {
 
         const free_var_matrix = try self.matrix.selectColumns(free_col_idxs);
 
-        const max_free_vals = try allocator.alloc(u16, free_col_idxs.len);
-        // TODO: Improve this - big performance sink!
-        // To start with, just iterate over the full range for each group, i.e.
-        // 0 to the size of the group multiplied by max per cell.
-        for (max_free_vals) |*val, i| {
-            val.* = @intCast(u16, self.groups[free_col_idxs[i]].len) * self.per_cell;
-        }
+        const max_free_vals = try self.findMaxFreeVals(free_var_matrix, rhs_vec, free_col_idxs);
         var iter = RectangularIterator{ .max_vals = max_free_vals };
+        std.log.info(
+            "Using free val maximums: {d} ({d} combinations)",
+            .{ max_free_vals, iter.size() },
+        );
         while (try iter.next()) |free_vals| {
             defer allocator.free(free_vals);
             const free_var_vec = try Matrix.fromFlatSlice(
@@ -889,6 +906,37 @@ const Solver = struct {
             .fixed = fixed_cols.toOwnedSlice(),
             .free = free_cols.toOwnedSlice(),
         };
+    }
+
+    fn findMaxFreeVals(
+        self: Self,
+        free_var_matrix: Matrix,
+        rhs_vec: Matrix,
+        free_col_idxs: []const usize,
+    ) error{OutOfMemory}![]const u16 {
+        assert(free_var_matrix.ySize() == rhs_vec.ySize());
+        assert(free_var_matrix.xSize() == free_col_idxs.len);
+        assert(rhs_vec.xSize() == 1);
+        const max_free_vals = try allocator.alloc(u16, free_var_matrix.xSize());
+        for (max_free_vals) |*val, i| {
+            val.* = @intCast(u16, self.groups[free_col_idxs[i]].len) * self.per_cell;
+            var y: usize = 0;
+            while (y < free_var_matrix.ySize()) : (y += 1) {
+                if (rhs_vec.getCell(0, y) < 0) continue;
+                if (free_var_matrix.getCell(i, y) <= 0) continue;
+                var unusable_row = false;
+                for (free_var_matrix.getRow(y)) |cell| {
+                    if (cell < 0) unusable_row = true;
+                }
+                if (unusable_row) continue;
+
+                const bound =
+                    @intCast(u16, rhs_vec.getCell(0, y)) /
+                    @intCast(u16, free_var_matrix.getCell(i, y));
+                if (bound < val.*) val.* = bound;
+            }
+        }
+        return max_free_vals;
     }
 };
 
@@ -1062,18 +1110,26 @@ pub fn main() !u8 {
 
     var matrix = try board.toMatrix();
     defer matrix.deinit();
-    try stdout.print(
-        "Matrix:\n{s}\n",
-        .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
-    );
+    if (matrix.ySize() < 40) {
+        try stdout.print(
+            "Matrix:\n{s}\n",
+            .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
+        );
+    } else {
+        std.log.warn("Omitting large full matrix output", .{});
+    }
 
     try stdout.print("\n", .{});
 
     matrix.rref();
-    try stdout.print(
-        "RREF matrix:\n{s}\n",
-        .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
-    );
+    if (matrix.ySize() < 40) {
+        try stdout.print(
+            "RREF matrix:\n{s}\n",
+            .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
+        );
+    } else {
+        std.log.warn("Omitting large RREF matrix output", .{});
+    }
 
     try stdout.print("\n", .{});
 
