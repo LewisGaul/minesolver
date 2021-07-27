@@ -732,7 +732,7 @@ const Solver = struct {
             }
         }
 
-        const rhs_matrix = try self.matrix.selectColumns(&[_]usize{self.matrix.xSize() - 1});
+        const rhs_vec = try self.matrix.selectColumns(&[_]usize{self.matrix.xSize() - 1});
         const col_categorisation = try self.categoriseColumns();
         const fixed_col_idxs = col_categorisation.fixed;
         const free_col_idxs = col_categorisation.free;
@@ -740,10 +740,19 @@ const Solver = struct {
         var configs = ArrayList([]u16).init(allocator);
         defer configs.deinit();
 
+        if (free_col_idxs.len == 0) {
+            const config = try allocator.alloc(u16, self.groups.len);
+            for (config) |*val, i| {
+                val.* = @intCast(u16, rhs_vec.getCell(0, i));
+            }
+            try configs.append(config);
+            return configs.toOwnedSlice();
+        }
+
         const free_var_matrix = try self.matrix.selectColumns(free_col_idxs);
 
         const max_free_vals = try allocator.alloc(u16, free_col_idxs.len);
-        // TODO: Improve this.
+        // TODO: Improve this - big performance sink!
         // To start with, just iterate over the full range for each group, i.e.
         // 0 to the size of the group multiplied by max per cell.
         for (max_free_vals) |*val, i| {
@@ -763,7 +772,7 @@ const Solver = struct {
             const fixed_var_vec = blk: {
                 const multiplied_matrix = try free_var_matrix.matrixMultiply(free_var_vec);
                 defer multiplied_matrix.deinit();
-                break :blk try rhs_matrix.matrixSubtract(multiplied_matrix);
+                break :blk try rhs_vec.matrixSubtract(multiplied_matrix);
             };
             defer fixed_var_vec.deinit();
 
@@ -789,6 +798,8 @@ const Solver = struct {
             }
             try configs.append(config);
         }
+
+        if (configs.items.len == 0) return error.InvalidMatrixEquations;
 
         return configs.toOwnedSlice();
     }
