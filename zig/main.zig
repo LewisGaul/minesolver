@@ -24,7 +24,38 @@ const assert = std.debug.assert;
 // Globals
 // -----------------------------------------------------------------------------
 
+var start_milli_time: u64 = 0;
+
 pub const log_level = .info;
+
+/// Override the default logger in std.log, including a timestamp in the output.
+pub fn log(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (@enumToInt(message_level) <= @enumToInt(std.log.level)) {
+        const milli_time = @intCast(u64, std.time.milliTimestamp()) - start_milli_time;
+        const level_txt = switch (message_level) {
+            // zig fmt: off
+            .emerg  => "EMERG",
+            .alert  => "ALERT",
+            .crit   => " CRIT",
+            .err    => "ERROR",
+            .warn   => " WARN",
+            .notice => " NOTE",
+            .info   => " INFO",
+            .debug  => "DEBUG",
+            // zig fmt: on
+        };
+        const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+        const held = std.debug.getStderrMutex().acquire();
+        defer held.release();
+        nosuspend stderr.print("{d:>2}.{d:0^3} ", .{ milli_time / 1000, milli_time % 1000 }) catch return;
+        nosuspend stderr.print("[" ++ level_txt ++ "]" ++ prefix2 ++ format ++ "\n", args) catch return;
+    }
+}
 
 var allocator: *Allocator = std.heap.page_allocator;
 
@@ -816,6 +847,8 @@ const Solver = struct {
             try configs.append(config);
         }
 
+        std.log.info("Found {d} mine configurations", .{configs.items.len});
+
         if (configs.items.len == 0) return error.InvalidMatrixEquations;
 
         return configs.toOwnedSlice();
@@ -1068,6 +1101,7 @@ fn parseArgs() !Args {
 }
 
 pub fn main() !u8 {
+    start_milli_time = @intCast(u64, std.time.milliTimestamp());
     // Set up an allocator - no need to free memory as we go.
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     allocator = &gpa.allocator;
@@ -1155,6 +1189,7 @@ pub fn main() !u8 {
         try stdout.print("{d}: {d}\n", .{ i, cfg });
     }
 
+    std.log.info("Finished", .{});
     return 0;
 }
 
