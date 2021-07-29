@@ -52,7 +52,7 @@ pub fn log(
         const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
         const held = std.debug.getStderrMutex().acquire();
         defer held.release();
-        nosuspend stderr.print("{d:>2}.{d:0^3} ", .{ milli_time / 1000, milli_time % 1000 }) catch return;
+        nosuspend stderr.print("{d:>2}.{d:0>3} ", .{ milli_time / 1000, milli_time % 1000 }) catch return;
         nosuspend stderr.print("[" ++ level_txt ++ "]" ++ prefix2 ++ format ++ "\n", args) catch return;
     }
 }
@@ -884,6 +884,7 @@ const Solver = struct {
                     try group.append(x2);
                 }
             }
+            std.log.debug("Found group {d}: {d}", .{ groups.items.len, group.items });
             try groups.append(group.toOwnedSlice());
         }
 
