@@ -691,18 +691,24 @@ const Board = struct {
 
 const RectangularIterator = struct {
     max_vals: []const u16,
+    /// Field to store memory to use for the return slice.
+    result_slice: []u16,
     idx: usize = 0,
 
-    pub fn next(self: *@This()) !?[]const u16 {
+    pub fn init(max_vals: []const u16, result_slice: []u16) @This() {
+        assert(result_slice.len == max_vals.len);
+        return .{ .max_vals = max_vals, .result_slice = result_slice };
+    }
+
+    pub fn next(self: *@This()) ?[]const u16 {
         if (self.idx >= self.size()) return null;
         defer self.idx += 1;
-        const result = try allocator.alloc(u16, self.max_vals.len);
         var counter: usize = 1;
         for (self.max_vals) |val, i| {
-            result[i] = @intCast(u16, (self.idx / counter) % (val + 1));
+            self.result_slice[i] = @intCast(u16, (self.idx / counter) % (val + 1));
             counter *= val + 1;
         }
-        return result;
+        return self.result_slice;
     }
 
     pub fn size(self: @This()) usize {
@@ -827,39 +833,40 @@ const Solver = struct {
         const free_var_matrix = try self.matrix.selectColumns(free_col_idxs);
 
         const max_free_vals = try self.findMaxFreeVals(free_var_matrix, rhs_vec, free_col_idxs);
-        var iter = RectangularIterator{ .max_vals = max_free_vals };
+        const free_vals_storage = try allocator.alloc(u16, max_free_vals.len);
+        defer allocator.free(free_vals_storage);
+        var iter = RectangularIterator.init(max_free_vals, free_vals_storage);
         std.log.info(
             "Using free val maximums: {d} ({d} combinations)",
             .{ max_free_vals, iter.size() },
         );
-        while (try iter.next()) |free_vals| {
-            defer allocator.free(free_vals);
-            const free_var_vec = try Matrix.fromFlatSlice(
-                u16,
-                1,
-                free_vals.len,
-                free_vals,
-            );
-            defer free_var_vec.deinit();
 
-            const fixed_var_vec = blk: {
-                const multiplied_matrix = try free_var_matrix.matrixMultiply(free_var_vec);
-                defer multiplied_matrix.deinit();
-                break :blk try rhs_vec.matrixSubtract(multiplied_matrix);
-            };
-            defer fixed_var_vec.deinit();
+        const fixed_vals = try allocator.alloc(isize, fixed_col_idxs.len);
+        defer allocator.free(fixed_vals);
+        while (iter.next()) |free_vals| {
+            // Fill in 'fixed_vals' by performing matrix multiplication.
+            for (fixed_vals) |*cell, i| {
+                var subtract_val: isize = 0;
+                for (free_var_matrix.getRow(i)) |free_cell, j| {
+                    subtract_val += free_cell * free_vals[j];
+                }
+                cell.* = rhs_vec.getCell(0, i) - subtract_val;
+            }
 
             var invalid_var_idx: ?usize = null;
-            for (fixed_var_vec.grid.data) |row, idx| {
-                if (row[0] < 0 or
-                    row[0] > self.groups[fixed_col_idxs[idx]].len * self.per_cell)
+            for (fixed_vals) |cell, idx| {
+                if (cell < 0 or
+                    cell > self.groups[fixed_col_idxs[idx]].len * self.per_cell)
                 {
                     invalid_var_idx = idx;
                     break;
                 }
             }
             if (invalid_var_idx) |idx| {
-                std.log.debug("Potential config {d} invalid in fixed var {d}", .{ iter.idx, idx });
+                std.log.debug(
+                    "Potential config {d} invalid in fixed var {d}",
+                    .{ iter.idx, idx },
+                );
                 continue;
             }
 
@@ -867,10 +874,10 @@ const Solver = struct {
             errdefer allocator.free(config);
 
             for (fixed_col_idxs) |grp_idx, fixed_col_idx| {
-                config[grp_idx] = @intCast(u16, fixed_var_vec.getCell(0, fixed_col_idx));
+                config[grp_idx] = @intCast(u16, fixed_vals[fixed_col_idx]);
             }
             for (free_col_idxs) |grp_idx, free_col_idx| {
-                config[grp_idx] = @intCast(u16, free_var_vec.getCell(0, free_col_idx));
+                config[grp_idx] = @intCast(u16, free_vals[free_col_idx]);
             }
             try configs.append(config);
             std.log.debug("Potential config {d} is valid number {d}", .{ iter.idx, configs.items.len });
