@@ -806,6 +806,10 @@ const Solver = struct {
         const col_categorisation = try self.categoriseColumns();
         const fixed_col_idxs = col_categorisation.fixed;
         const free_col_idxs = col_categorisation.free;
+        std.log.info(
+            "Categorised columns: {d} fixed, {d} free",
+            .{ fixed_col_idxs.len, free_col_idxs.len },
+        );
 
         var configs = ArrayList([]u16).init(allocator);
         defer configs.deinit();
@@ -815,6 +819,7 @@ const Solver = struct {
             for (config) |*val, i| {
                 val.* = @intCast(u16, rhs_vec.getCell(0, i));
             }
+            std.log.info("Found a unique solution", .{});
             try configs.append(config);
             return configs.toOwnedSlice();
         }
@@ -844,16 +849,19 @@ const Solver = struct {
             };
             defer fixed_var_vec.deinit();
 
-            var invalid = false;
+            var invalid_var_idx: ?usize = null;
             for (fixed_var_vec.grid.data) |row, idx| {
                 if (row[0] < 0 or
                     row[0] > self.groups[fixed_col_idxs[idx]].len * self.per_cell)
                 {
-                    invalid = true;
+                    invalid_var_idx = idx;
                     break;
                 }
             }
-            if (invalid) continue;
+            if (invalid_var_idx) |idx| {
+                std.log.debug("Potential config {d} invalid in fixed var {d}", .{ iter.idx, idx });
+                continue;
+            }
 
             var config = try allocator.alloc(u16, self.groups.len);
             errdefer allocator.free(config);
@@ -865,6 +873,7 @@ const Solver = struct {
                 config[grp_idx] = @intCast(u16, free_var_vec.getCell(0, free_col_idx));
             }
             try configs.append(config);
+            std.log.debug("Potential config {d} is valid number {d}", .{ iter.idx, configs.items.len });
         }
 
         std.log.info("Found {d} mine configurations", .{configs.items.len});
@@ -1137,7 +1146,6 @@ pub fn main() !u8 {
         "Parsed args: mines={d}, per_cell={d}, verbose={}",
         .{ args.mines, args.per_cell, args.debug },
     );
-
 
     const max_size = 1024 * 1024; // 1MB
     const input = args.input_file.readToEndAlloc(
