@@ -212,8 +212,9 @@ fn Grid(comptime T: type) type {
         }
 
         /// The 'idx' argument must be in range of the grid bounds, as given by
-        /// 'Grid.xSize()'.
-        pub fn getColumn(g: Self, idx: usize) ![]const T {
+        /// 'Grid.xSize()'. Allocates memory for the slice - memory owned by the
+        /// caller.
+        pub fn getColumn(g: Self, idx: usize) error{OutOfMemory}![]const T {
             var list = ArrayList(T).init(allocator);
             defer list.deinit();
             try list.ensureTotalCapacity(g.xSize());
@@ -221,6 +222,16 @@ fn Grid(comptime T: type) type {
                 list.appendAssumeCapacity(row[idx]);
             }
             return list.toOwnedSlice();
+        }
+
+        /// The 'idx' argument must be in range of the grid bounds, as given by
+        /// 'xSize()'. The provided slice must be big enough to store the column.
+        pub fn getColumnIntoSlice(self: Self, idx: usize, slice: []T) void {
+            const x = idx;
+            var y: usize = 0;
+            while (y < self.ySize()) : (y += 1) {
+                slice[y] = self.getCell(x, y);
+            }
         }
 
         pub fn count(g: Self, item: anytype) usize {
@@ -260,7 +271,7 @@ fn Grid(comptime T: type) type {
         }
 
         /// Make a shallow copy of the grid - memory owned by the caller.
-        pub fn copy(g: Self) !Self {
+        pub fn copy(g: Self) error{OutOfMemory}!Self {
             return Self.fromOwnedData(g.data);
         }
 
@@ -269,7 +280,7 @@ fn Grid(comptime T: type) type {
         }
 
         /// Allocates the slice - memory owned by the caller.
-        pub fn getNeighbours(g: Self, x: usize, y: usize) ![]const Entry {
+        pub fn getNeighbours(g: Self, x: usize, y: usize) error{OutOfMemory}![]const Entry {
             var x_min: usize = x;
             var x_max: usize = x;
             var y_min: usize = y;
@@ -301,7 +312,7 @@ const Matrix = struct {
 
     const Self = @This();
 
-    pub fn init(cells: [][]isize) !Self {
+    pub fn init(cells: [][]isize) error{OutOfMemory}!Self {
         return Self{ .grid = try Grid(isize).fromOwnedData(cells) };
     }
 
@@ -327,7 +338,7 @@ const Matrix = struct {
     }
 
     /// Return a new matrix containing selected columns from the current matrix.
-    pub fn selectColumns(self: Self, col_idxs: []const usize) !Self {
+    pub fn selectColumns(self: Self, col_idxs: []const usize) error{OutOfMemory}!Self {
         // TODO: Free memory on error.
         const rows = try allocator.alloc([]isize, self.ySize());
         for (rows) |*row, y| {
@@ -393,9 +404,15 @@ const Matrix = struct {
     }
 
     /// The 'idx' argument must be in range of the grid bounds, as given by
-    /// 'xSize()'.
-    pub fn getColumn(self: Self, idx: usize) ![]const isize {
+    /// 'xSize()'. Allocates memory for the slice - memory owned by the caller.
+    pub fn getColumn(self: Self, idx: usize) error{OutOfMemory}![]const isize {
         return self.grid.getColumn(idx);
+    }
+
+    /// The 'idx' argument must be in range of the grid bounds, as given by
+    /// 'xSize()'. The provided slice must be big enough to store the column.
+    pub fn getColumnIntoSlice(self: Self, idx: usize, slice: []isize) void {
+        self.grid.getColumnIntoSlice(idx, slice);
     }
 
     pub fn toStr(self: Self, opts: struct { sep_idx: ?usize = null }) ![]const u8 {
@@ -403,11 +420,11 @@ const Matrix = struct {
     }
 
     /// Returns a copy of the matrix - memory owned by the caller.
-    pub fn copy(self: Self) !Self {
+    pub fn copy(self: Self) error{OutOfMemory}!Self {
         return Self{ .grid = try self.grid.copy() };
     }
 
-    pub fn matrixAdd(self: Self, other: Self) !Self {
+    pub fn matrixAdd(self: Self, other: Self) error{OutOfMemory}!Self {
         assert(self.xSize() == other.xSize() and self.ySize() == other.ySize());
         var new_matrix = try self.copy();
         for (new_matrix.grid.data) |row, y| {
@@ -418,7 +435,7 @@ const Matrix = struct {
         return new_matrix;
     }
 
-    pub fn matrixSubtract(self: Self, other: Self) !Self {
+    pub fn matrixSubtract(self: Self, other: Self) error{OutOfMemory}!Self {
         assert(self.xSize() == other.xSize() and self.ySize() == other.ySize());
         var new_matrix = try self.copy();
         for (new_matrix.grid.data) |row, y| {
@@ -429,7 +446,7 @@ const Matrix = struct {
         return new_matrix;
     }
 
-    pub fn matrixMultiply(self: Self, other: Self) !Self {
+    pub fn matrixMultiply(self: Self, other: Self) error{OutOfMemory}!Self {
         assert(self.xSize() == other.ySize());
         const new_rows = try allocator.alloc([]isize, self.ySize());
         var y: u8 = 0;
@@ -862,14 +879,19 @@ const Solver = struct {
         var remove_columns = ArrayList(usize).init(allocator);
         defer remove_columns.deinit();
 
+        // Allocate memory for two columns, which will be used to compare columns.
+        const column1 = try allocator.alloc(isize, self.matrix.ySize());
+        defer allocator.free(column1);
+        const column2 = try allocator.alloc(isize, self.matrix.ySize());
+        defer allocator.free(column2);
+
         // Iterate over columns to find groups.
         var x1: usize = 0;
         while (x1 < self.matrix.xSize() - 2) : (x1 += 1) {
             // If already included in a group, skip over this column.
             if (std.mem.indexOfScalar(usize, remove_columns.items, x1)) |_| continue;
 
-            const column1 = try self.matrix.getColumn(x1);
-            defer allocator.free(column1);
+            self.matrix.getColumnIntoSlice(x1, column1);
 
             var group = ArrayList(usize).init(allocator);
             defer group.deinit();
@@ -877,8 +899,7 @@ const Solver = struct {
 
             var x2: usize = x1 + 1;
             while (x2 < self.matrix.xSize() - 1) : (x2 += 1) {
-                const column2 = try self.matrix.getColumn(x2);
-                defer allocator.free(column2);
+                self.matrix.getColumnIntoSlice(x2, column2);
                 if (std.mem.eql(isize, column1, column2)) {
                     try remove_columns.append(x2);
                     try group.append(x2);
@@ -891,6 +912,7 @@ const Solver = struct {
         const new_x_size = self.matrix.xSize() - remove_columns.items.len;
         const y_size = self.matrix.ySize();
 
+        // TODO: This is not efficient.
         var new_matrix_cells = ArrayList(isize).init(allocator);
         defer new_matrix_cells.deinit();
         try new_matrix_cells.ensureTotalCapacity(new_x_size * y_size);
