@@ -875,9 +875,11 @@ const Solver = struct {
         var groups = ArrayList([]const usize).init(allocator);
         defer groups.deinit();
 
-        // Indexes of columns to remove.
-        var remove_columns = ArrayList(usize).init(allocator);
-        defer remove_columns.deinit();
+        // Indexes of columns to keep and remove.
+        var remove_col_idxs = ArrayList(usize).init(allocator);
+        defer remove_col_idxs.deinit();
+        var keep_col_idxs = ArrayList(usize).init(allocator);
+        defer keep_col_idxs.deinit();
 
         // Allocate memory for two columns, which will be used to compare columns.
         const column1 = try allocator.alloc(isize, self.matrix.ySize());
@@ -887,50 +889,35 @@ const Solver = struct {
 
         // Iterate over columns to find groups.
         var x1: usize = 0;
-        while (x1 < self.matrix.xSize() - 2) : (x1 += 1) {
+        while (x1 < self.matrix.xSize() - 1) : (x1 += 1) {
             // If already included in a group, skip over this column.
-            if (std.mem.indexOfScalar(usize, remove_columns.items, x1)) |_| continue;
+            if (std.mem.indexOfScalar(usize, remove_col_idxs.items, x1)) |_| continue;
 
             self.matrix.getColumnIntoSlice(x1, column1);
 
             var group = ArrayList(usize).init(allocator);
             defer group.deinit();
             try group.append(x1);
+            try keep_col_idxs.append(x1);
 
             var x2: usize = x1 + 1;
             while (x2 < self.matrix.xSize() - 1) : (x2 += 1) {
                 self.matrix.getColumnIntoSlice(x2, column2);
                 if (std.mem.eql(isize, column1, column2)) {
-                    try remove_columns.append(x2);
+                    try remove_col_idxs.append(x2);
                     try group.append(x2);
                 }
             }
             std.log.debug("Found group {d}: {d}", .{ groups.items.len, group.items });
             try groups.append(group.toOwnedSlice());
         }
-
-        const new_x_size = self.matrix.xSize() - remove_columns.items.len;
-        const y_size = self.matrix.ySize();
-
-        // TODO: This is not efficient.
-        var new_matrix_cells = ArrayList(isize).init(allocator);
-        defer new_matrix_cells.deinit();
-        try new_matrix_cells.ensureTotalCapacity(new_x_size * y_size);
-
-        var iter = self.matrix.grid.iterator();
-        while (iter.next()) |entry| {
-            if (std.mem.indexOfScalar(usize, remove_columns.items, entry.x)) |_| continue;
-            new_matrix_cells.appendAssumeCapacity(entry.value);
-        }
+        // Keep the RHS column.
+        try keep_col_idxs.append(self.matrix.xSize() - 1);
 
         self.groups = groups.toOwnedSlice();
-        self.matrix.deinit();
-        self.matrix = try Matrix.fromFlatSlice(
-            isize,
-            new_x_size,
-            y_size,
-            new_matrix_cells.items,
-        );
+        const old_matrix = self.matrix;
+        defer old_matrix.deinit();
+        self.matrix = try self.matrix.selectColumns(keep_col_idxs.items);
     }
 
     const ColumnCategorisation = struct { fixed: []const usize, free: []const usize };
