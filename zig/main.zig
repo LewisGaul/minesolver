@@ -26,7 +26,9 @@ const assert = std.debug.assert;
 
 var start_milli_time: u64 = 0;
 
-pub const log_level = .info;
+// Can't make this pub as std.log then tries to read it at comptime, and we
+// want it to be configurable via CLI flags.
+var log_level: std.log.Level = .info;
 
 /// Override the default logger in std.log, including a timestamp in the output.
 pub fn log(
@@ -35,7 +37,7 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (@enumToInt(message_level) <= @enumToInt(std.log.level)) {
+    if (@enumToInt(message_level) <= @enumToInt(log_level)) {
         const milli_time = @intCast(u64, std.time.milliTimestamp()) - start_milli_time;
         const level_txt = switch (message_level) {
             // zig fmt: off
@@ -97,6 +99,7 @@ const Args = struct {
     input_file: File,
     mines: u16,
     per_cell: u8 = 1,
+    debug: bool = false,
 };
 
 const CellContents = union(enum) {
@@ -1051,10 +1054,11 @@ fn parseArgs() !Args {
     // First we specify what parameters our program can take.
     // We can use 'parseParam()' to parse a string to a 'Param(Help)'.
     const params = comptime [_]clap.Param(clap.Help){
-        clap.parseParam("-h, --help           Display this help and exit") catch unreachable,
-        clap.parseParam("<MINES>              Number of mines") catch unreachable,
-        clap.parseParam("-f, --file <PATH>    Input file (defaults to stdin)") catch unreachable,
-        clap.parseParam("--per-cell <NUM>     Max number of mines per cell") catch unreachable,
+        clap.parseParam("-h, --help            Display this help and exit") catch unreachable,
+        clap.parseParam("<MINES>               Number of mines") catch unreachable,
+        clap.parseParam("-f, --file <PATH>     Input file (defaults to stdin)") catch unreachable,
+        clap.parseParam("-p, --per-cell <NUM>  Max number of mines per cell") catch unreachable,
+        clap.parseParam("-v, --verbose         Output debug logging to stderr") catch unreachable,
     };
 
     // Initalize diagnostics for reporting parsing errors.
@@ -1107,6 +1111,10 @@ fn parseArgs() !Args {
         }
     }
 
+    if (clap_args.flag("--verbose")) {
+        args.debug = true;
+    }
+
     return args;
 }
 
@@ -1123,11 +1131,13 @@ pub fn main() !u8 {
         => return 2,
         else => return 1,
     };
+    if (args.debug) log_level = .debug;
 
-    try stdout.print(
-        "Parsed args:\nmines={d}, per_cell={d}\n",
-        .{ args.mines, args.per_cell },
+    std.log.debug(
+        "Parsed args: mines={d}, per_cell={d}, verbose={}",
+        .{ args.mines, args.per_cell, args.debug },
     );
+
 
     const max_size = 1024 * 1024; // 1MB
     const input = args.input_file.readToEndAlloc(
