@@ -91,6 +91,43 @@ fn absDifference(val1: anytype, val2: @TypeOf(val1)) @TypeOf(val1) {
     return if (val1 >= val2) val1 - val2 else val2 - val1;
 }
 
+/// Returns the log of the number of combinations for group of size 's',
+/// 'm' mines, and 'xmax' mines per cell.
+fn logCombs(s: usize, m: usize, xmax: u8) f64 {
+    assert(m <= s * xmax);
+    if (s == 1) return 0;
+    if (xmax == 1) {
+        var result: f64 = 0;
+        var i: usize = s - m + 1;
+        while (i <= s) : (i += 1) {
+            result += std.math.ln(@intToFloat(f64, i));
+        }
+        return result;
+    } else if (xmax >= m) {
+        return std.math.ln(@intToFloat(f64, s)) * @intToFloat(f64, m);
+    } else {
+        std.log.err("Not yet able to calculate number of combinations for per_cell > 1", .{});
+        assert(false);
+    }
+    unreachable;
+}
+
+/// Calculate the probability a cell contains a mine in a group of size 's'
+/// containing 'm' mines and with max per cell of 'xmax'.
+fn unsafeProb(s: usize, m: usize, xmax: u8) f64 {
+    if (m > s * xmax) return 0;
+    if (xmax == 1) {
+        return @intToFloat(f64, m) / @intToFloat(f64, s);
+    } else if (xmax >= m) {
+        return 1 - std.math.pow(f64, 1 - 1.0 / @intToFloat(f64, s), @intToFloat(f64, m));
+    } else if (m > xmax * (s - 1)) {
+        return 1;
+    } else {
+        return 1 - std.math.exp(logCombs(s - 1, m, xmax) - logCombs(s, m, xmax));
+    }
+    unreachable;
+}
+
 // -----------------------------------------------------------------------------
 // Structs
 // -----------------------------------------------------------------------------
@@ -168,6 +205,14 @@ fn Grid(comptime T: type) type {
             }
         };
 
+        pub fn init(x_size: usize, y_size: usize) !Self {
+            const rows: [][]T = try allocator.alloc([]T, y_size);
+            for (rows) |*row| {
+                row.* = try allocator.alloc(T, x_size);
+            }
+            return Self{ .data = rows };
+        }
+
         /// Allocates memory to copy the data, free by calling 'Grid.deinit()'.
         pub fn fromFlatSlice(x_size: usize, y_size: usize, cells: []const T) !Self {
             if (cells.len != x_size * y_size or cells.len == 0)
@@ -206,6 +251,10 @@ fn Grid(comptime T: type) type {
         /// given by 'Grid.xSize()' and 'Grid.ySize()'.
         pub fn getCell(g: Self, x: usize, y: usize) T {
             return g.data[y][x];
+        }
+
+        pub fn getCellAtIdx(g: Self, idx: usize) T {
+            return g.getCell(idx % g.xSize(), idx / g.xSize());
         }
 
         /// The 'idx' argument must be in range of the grid bounds, as given by
@@ -247,12 +296,16 @@ fn Grid(comptime T: type) type {
             return c;
         }
 
-        pub fn toStr(g: Self, opts: struct { sep_idx: ?usize = null }) ![]const u8 {
+        pub fn toStr(
+            g: Self,
+            comptime fmt: []const u8,
+            opts: struct { sep_idx: ?usize = null },
+        ) ![]const u8 {
             // Find the max cell width.
             var max_width: u64 = 0;
             var iter = g.iterator();
             while (iter.next()) |entry| {
-                const cell_width = std.fmt.count("{}", .{entry.value});
+                const cell_width = std.fmt.count(fmt, .{entry.value});
                 if (cell_width > max_width) max_width = cell_width;
             }
 
@@ -265,9 +318,9 @@ fn Grid(comptime T: type) type {
                     if (i > 0) try writer.writeByte(' ');
                     if (opts.sep_idx != null and opts.sep_idx.? == i)
                         try writer.print("| ", .{});
-                    const cell_width = std.fmt.count("{}", .{cell});
+                    const cell_width = std.fmt.count(fmt, .{cell});
                     try writer.writeByteNTimes(' ', max_width - cell_width);
-                    try writer.print("{}", .{cell});
+                    try writer.print(fmt, .{cell});
                 }
             }
             return buf.toOwnedSlice();
@@ -419,7 +472,7 @@ const Matrix = struct {
     }
 
     pub fn toStr(self: Self, opts: struct { sep_idx: ?usize = null }) ![]const u8 {
-        return self.grid.toStr(.{ .sep_idx = opts.sep_idx });
+        return self.grid.toStr("{}", .{ .sep_idx = opts.sep_idx });
     }
 
     /// Returns a copy of the matrix - memory owned by the caller.
@@ -623,7 +676,7 @@ const Board = struct {
     }
 
     pub fn toStr(self: Self) ![]const u8 {
-        return self.grid.toStr(.{});
+        return self.grid.toStr("{}", .{});
     }
 
     /// Convert a board into a set of simultaneous equations, represented in matrix
@@ -763,13 +816,18 @@ const Solver = struct {
         self.matrix.deinit();
     }
 
+    pub fn solve(self: Self) !Matrix {
+        const configs = try self.findConfigs();
+        return self.calcProbabilities(configs);
+    }
+
     /// Returns a slice containing valid mine configurations, which are
     /// represented as slices of length equal to the number of groups (i.e. the
     /// number of matrix columns), with the values being the number of mines in
     /// the corresponding group.
     ///
     /// Memory owned by the caller.
-    pub fn solve(self: Self) ![]const []const u16 {
+    pub fn findConfigs(self: Self) ![]const []const u16 {
         // We begin with a matrix in RREF, such as:
         //   1  0  0  0  0  0  1  1 |  1
         //   0  1  0  0  0  1  0  0 |  4
@@ -888,6 +946,63 @@ const Solver = struct {
         if (configs.items.len == 0) return error.InvalidMatrixEquations;
 
         return configs.toOwnedSlice();
+    }
+
+    pub fn calcProbabilities(self: Self, configs: []const []const u16) !Grid(f64) {
+        const cfg_probs = try allocator.alloc(f64, configs.len);
+        for (configs) |cfg, idx| {
+            var log_combs: f64 = 0;
+            for (cfg) |m_i, i| {
+                const g_size = self.groups[i].len;
+                log_combs += logCombs(g_size, m_i, self.per_cell);
+                var k: u16 = 1;
+                while (k <= m_i) : (k += 1) {
+                    log_combs -= std.math.ln(@intToFloat(f64, k));
+                }
+            }
+            cfg_probs[idx] = std.math.exp(log_combs);
+            assert(cfg_probs[idx] > 0);
+        }
+
+        var weight: f64 = 0;
+        for (cfg_probs) |p| weight += p;
+        for (cfg_probs) |*p| {
+            p.* = p.* / weight;
+            assert(p.* <= 1);
+        }
+
+        const x_size = self.board.xSize();
+        const y_size = self.board.ySize();
+        const probs_grid = try Grid(f64).init(x_size, y_size);
+        for (probs_grid.data) |row| {
+            for (row) |*cell| {
+                cell.* = 0;
+            }
+        }
+
+        // TODO: Shouldn't need this...
+        var unclicked_cell_probs = ArrayList(*f64).init(allocator);
+        defer unclicked_cell_probs.deinit();
+        var iter = self.board.grid.iterator();
+        while (iter.next()) |entry| {
+            if (entry.value == .Unclicked)
+                try unclicked_cell_probs.append(&probs_grid.data[entry.y][entry.x]);
+        }
+
+        for (self.groups) |grp_i, i| {
+            var unsafe_prob: f64 = 0;
+            for (configs) |cfg_j, j| {
+                unsafe_prob += cfg_probs[j] * unsafeProb(grp_i.len, cfg_j[i], self.per_cell);
+            }
+            assert(unsafe_prob >= 0);
+            // TODO: Add in some rounding to ensure this holds!
+            // assert(unsafe_prob <= 1);
+            for (grp_i) |cell_idx| {
+                unclicked_cell_probs.items[cell_idx].* = unsafe_prob;
+            }
+        }
+
+        return probs_grid;
     }
 
     fn reduceToGroups(self: *Self) !void {
@@ -1218,11 +1333,16 @@ pub fn main() !u8 {
 
     try stdout.print("\n", .{});
 
-    const configs = try solver.solve();
+    const configs = try solver.findConfigs();
     try stdout.print("Mine configurations:\n", .{});
     for (configs) |cfg, i| {
         try stdout.print("{d}: {d}\n", .{ i, cfg });
     }
+
+    try stdout.print("\n", .{});
+
+    const probs = try solver.calcProbabilities(configs);
+    try stdout.print("Probabilities:\n{s}\n", .{try probs.toStr("{d:.5}", .{})});
 
     std.log.info("Finished", .{});
     return 0;
@@ -1321,5 +1441,5 @@ test "Solver: invalid board" {
     const solver = try Solver.init(board, 1);
     defer solver.deinit();
 
-    try std.testing.expectError(error.InvalidMatrixEquations, solver.solve());
+    try std.testing.expectError(error.InvalidMatrixEquations, solver.findConfigs());
 }
