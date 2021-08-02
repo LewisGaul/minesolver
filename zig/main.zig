@@ -1339,10 +1339,14 @@ pub fn main() !u8 {
         try stdout.print("{d}: {d}\n", .{ i, cfg });
     }
 
-    try stdout.print("\n", .{});
+    if (solver.per_cell == 1) {
+        try stdout.print("\n", .{});
 
-    const probs = try solver.calcProbabilities(configs);
-    try stdout.print("Probabilities:\n{s}\n", .{try probs.toStr("{d:.5}", .{})});
+        const probs = try solver.calcProbabilities(configs);
+        try stdout.print("Probabilities:\n{s}\n", .{try probs.toStr("{d:.5}", .{})});
+    } else {
+        std.log.info("Skipping probability calculation for per_cell > 1", .{});
+    }
 
     std.log.info("Finished", .{});
     return 0;
