@@ -117,21 +117,30 @@ def prob(s: int, m: int, xmax: int = 1) -> float:
 
 
 def _find_combs(s: int, m: int, xmax: int) -> int:
+    if xmax == 1:
+        return fac(s) // fac(s - m)
+    elif xmax == 2:
+        tot = _find_combs(s, m, xmax=1)
+        for d in range(max(1, m - s), m // 2 + 1):
+            tot += (fac(s) * fac(m)) // (
+                2 ** d * fac(d) * fac(m - 2 * d) * fac(s - m + d)
+            )
+        return tot
+    elif xmax == 3:
+        tot = _find_combs(s, m, xmax=2)
+        for t in range(max(1, m - 2 * s), m // 3 + 1):
+            for d in range(max(1, m - 2 * t - s), (m - 3 * t) // 2 + 1):
+                tot += (fac(s) * fac(m)) // (
+                    fac(2) ** d
+                    * fac(3) ** t
+                    * fac(d)
+                    * fac(t)
+                    * fac(m - 2 * d - 3 * t)
+                    * fac(s - m + d + 2 * t)
+                )
+        return tot
+
     cfgs = [[0] * s]
-    # cfgs = [(1,) * min(m,s) + (0,) * max(0,s-m)]
-    # i = m
-    # t = tm.time()
-    ##    while i > 0:
-    ##        new_cfgs = []
-    ##        for c in cfgs:
-    ##            for j in uniquify(c):
-    ##                if j >= xmax:
-    ##                    break
-    ##                c1 = list(c)
-    ##                c1[c.index(j)] += 1
-    ##                new_cfgs.append(tuple(c1))
-    ##        cfgs = uniquify(new_cfgs)
-    ##        i -= 1
     end_cfgs = []
     for i in range(s):
         new_cfgs = []
