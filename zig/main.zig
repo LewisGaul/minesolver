@@ -97,18 +97,93 @@ fn absDifference(val1: anytype, val2: @TypeOf(val1)) @TypeOf(val1) {
 fn logCombs(s: usize, m: usize, xmax: u8) f64 {
     assert(m <= s * xmax);
     if (s == 1) return 0;
-    if (xmax == 1) {
+    if (xmax >= m) {
+        // s**m
+        return std.math.ln(@intToFloat(f64, s)) * @intToFloat(f64, m);
+    } else if (xmax == 1) {
+        // Falling factorial s!/m!
         var result: f64 = 0;
         var i: usize = s - m + 1;
         while (i <= s) : (i += 1) {
             result += std.math.ln(@intToFloat(f64, i));
         }
         return result;
-    } else if (xmax >= m) {
-        return std.math.ln(@intToFloat(f64, s)) * @intToFloat(f64, m);
+    } else if (xmax == 2) {
+        // A sum expression... see docs.
+        // Using floats accepting loss of precision, since the number of
+        // combinations can easily exceed something like u1000 max. Can't do
+        // all calculations with logs as we need to add numbers of combinations!
+        var tot: f64 = 0;
+        var d: usize = if (s >= m) 0 else m - s; // Number of double mines
+        while (d <= m / 2) : (d += 1) {
+            var ln_val: f64 = 0;
+            { // s! / (s - m + d)!
+                var i: usize = s + d - m + 1;
+                while (i <= s) : (i += 1) {
+                    ln_val += std.math.ln(@intToFloat(f64, i));
+                }
+            }
+            { // m! / (m - 2*d)!
+                var i: usize = m - 2 * d + 1;
+                while (i <= m) : (i += 1) {
+                    ln_val += std.math.ln(@intToFloat(f64, i));
+                }
+            }
+            { // 1 / (2**d * d!)
+                ln_val -= std.math.ln(2.0) * @intToFloat(f64, d);
+                var i: usize = 1;
+                while (i <= d) : (i += 1) {
+                    ln_val -= std.math.ln(@intToFloat(f64, i));
+                }
+            }
+            tot += std.math.exp(ln_val);
+        }
+        return std.math.ln(tot);
+    } else if (xmax == 3) {
+        // A horrible nested sum expression... see docs.
+        // Using floats accepting loss of precision, since the number of
+        // combinations can easily exceed something like u1000 max. Can't do
+        // all calculations with logs as we need to add numbers of combinations!
+        var tot: f64 = 0;
+        var t: usize = if (2 * s >= m) 0 else m - 2 * s; // Number of triple mines
+        while (t <= m / 3) : (t += 1) {
+            var d: usize = if (s >= m - 2 * t) 0 else m - 2 * t - s; // Number of double mines
+            while (d <= (m - 3 * t) / 2) : (d += 1) {
+                var ln_val: f64 = 0;
+                { // s! / (s - m + d + 2*t)!
+                    var i: usize = s + d + 2 * t - m + 1;
+                    while (i <= s) : (i += 1) {
+                        ln_val += std.math.ln(@intToFloat(f64, i));
+                    }
+                }
+                { // m! / (m - 2*d - 3*t)!
+                    var i: usize = m - 2 * d - 3 * t + 1;
+                    while (i <= m) : (i += 1) {
+                        ln_val += std.math.ln(@intToFloat(f64, i));
+                    }
+                }
+                { // 1 / ( (2!)**d * (3!)**t )
+                    ln_val -= std.math.ln(2.0) * @intToFloat(f64, d);
+                    ln_val -= std.math.ln(6.0) * @intToFloat(f64, t);
+                }
+                { // 1/d!
+                    var i: usize = 1;
+                    while (i <= d) : (i += 1) {
+                        ln_val -= std.math.ln(@intToFloat(f64, i));
+                    }
+                }
+                { // 1/t!
+                    var i: usize = 1;
+                    while (i <= t) : (i += 1) {
+                        ln_val -= std.math.ln(@intToFloat(f64, i));
+                    }
+                }
+                tot += std.math.exp(ln_val);
+            }
+        }
+        return std.math.ln(tot);
     } else {
-        std.log.err("Not yet able to calculate number of combinations for per_cell > 1", .{});
-        assert(false);
+        @panic("Unable to calculate number of combinations for per_cell > 3");
     }
     unreachable;
 }
@@ -1347,13 +1422,13 @@ pub fn main() !u8 {
         try stdout.print("{d}: {d}\n", .{ i, cfg });
     }
 
-    if (solver.per_cell == 1) {
+    if (solver.per_cell <= 3) {
         try stdout.print("\n", .{});
 
         const probs = try solver.calcProbabilities(configs);
         try stdout.print("Probabilities:\n{s}\n", .{try probs.toStr("{d:.5}", .{})});
     } else {
-        std.log.info("Skipping probability calculation for per_cell > 1", .{});
+        std.log.info("Skipping probability calculation for per_cell > 3", .{});
     }
 
     std.log.info("Finished", .{});
