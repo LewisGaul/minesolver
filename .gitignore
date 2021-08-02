@@ -2,6 +2,7 @@
 *.log
 build/
 dist/
+*.egg-info/
 target/
 __pycache__/
 .vscode/

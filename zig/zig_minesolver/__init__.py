@@ -1,5 +1,11 @@
+__all__ = ("get_board_probs",)
+
+import pathlib
 import subprocess
 from typing import List
+
+
+THIS_DIR = pathlib.Path(__file__).parent
 
 
 def get_board_probs(board: str, mines: int, *, per_cell: int = 1) -> List[List[float]]:
@@ -17,7 +23,7 @@ def get_board_probs(board: str, mines: int, *, per_cell: int = 1) -> List[List[f
     probability of the cell being a mine, between 0 and 1.
     """
     proc = subprocess.run(
-        ["zig-main", str(mines), "--per-cell", str(per_cell)],
+        [str(THIS_DIR / "zig-main"), str(mines), "--per-cell", str(per_cell)],
         input=board,
         universal_newlines=True,
         stdout=subprocess.PIPE,

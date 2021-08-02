@@ -61,8 +61,9 @@ pub fn log(
 
 var allocator: *Allocator = std.heap.page_allocator;
 
-const stdout = std.io.getStdOut().writer();
-const stderr = std.io.getStdErr().writer();
+// Have to get these at runtime on Windows.
+var stdout: std.fs.File.Writer = undefined;
+var stderr: std.fs.File.Writer = undefined;
 
 // -----------------------------------------------------------------------------
 // Helper functions
@@ -1258,6 +1259,9 @@ pub fn main() !u8 {
     // Set up an allocator - no need to free memory as we go.
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     allocator = &gpa.allocator;
+
+    stdout = std.io.getStdOut().writer();
+    stderr = std.io.getStdErr().writer();
 
     const args = parseArgs() catch |err| switch (err) {
         error.InvalidArgument,
