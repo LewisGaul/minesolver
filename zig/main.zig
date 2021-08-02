@@ -320,7 +320,7 @@ fn Grid(comptime T: type) type {
                     if (opts.sep_idx != null and opts.sep_idx.? == i)
                         try writer.print("| ", .{});
                     const cell_width = std.fmt.count(fmt, .{cell});
-                    try writer.writeByteNTimes(' ', max_width - cell_width);
+                    try writer.writeByteNTimes(' ', @intCast(usize, max_width - cell_width));
                     try writer.print(fmt, .{cell});
                 }
             }
