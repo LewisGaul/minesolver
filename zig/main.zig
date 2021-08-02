@@ -545,7 +545,6 @@ const Matrix = struct {
                 self.negateRow(row_idx);
             }
             assert(self.getCell(col_idx, row_idx) > 0);
-            const pivot_val = @intCast(usize, self.getCell(col_idx, row_idx));
 
             var inner_row_idx: usize = 0;
             while (inner_row_idx < self.ySize()) : (inner_row_idx += 1) {
@@ -559,6 +558,7 @@ const Matrix = struct {
                 }
                 const abs_inner_row_val = std.math.absCast(self.getCell(col_idx, inner_row_idx));
 
+                const pivot_val = @intCast(usize, self.getCell(col_idx, row_idx));
                 const pivot_lcm = lcm(pivot_val, abs_inner_row_val);
                 const pivot_multiple = pivot_lcm / pivot_val;
                 const inner_multiple = pivot_lcm / abs_inner_row_val;
@@ -631,7 +631,7 @@ const Matrix = struct {
         if (factor == 1) return;
         for (self.grid.data[row_idx]) |*cell| {
             // TODO: Dodgy int casts...
-            cell.* = @intCast(u16, cell.*) * @intCast(u16, factor);
+            cell.* = @intCast(i16, cell.*) * @intCast(i16, factor);
         }
     }
 
@@ -891,6 +891,7 @@ const Solver = struct {
         const free_var_matrix = try self.matrix.selectColumns(free_col_idxs);
 
         const max_free_vals = try self.findMaxFreeVals(free_var_matrix, rhs_vec, free_col_idxs);
+        defer allocator.free(max_free_vals);
         const free_vals_storage = try allocator.alloc(u16, max_free_vals.len);
         defer allocator.free(free_vals_storage);
         var iter = RectangularIterator.init(max_free_vals, free_vals_storage);
@@ -938,7 +939,10 @@ const Solver = struct {
                 config[grp_idx] = @intCast(u16, free_vals[free_col_idx]);
             }
             try configs.append(config);
-            std.log.debug("Potential config {d} is valid number {d}", .{ iter.idx, configs.items.len });
+            std.log.debug(
+                "Potential config {d} is valid number {d}",
+                .{ iter.idx, configs.items.len },
+            );
         }
 
         std.log.info("Found {d} mine configurations", .{configs.items.len});
@@ -1356,6 +1360,12 @@ pub fn main() !u8 {
 // Tests
 // -----------------------------------------------------------------------------
 
+test "lcm" {
+    try std.testing.expectEqual(@as(usize, 2), lcm(1, 2));
+    try std.testing.expectEqual(@as(usize, 10), lcm(5, 2));
+    try std.testing.expectEqual(@as(usize, 24), lcm(8, 6));
+}
+
 test "Grid init/deinit" {
     allocator = std.testing.allocator;
     const data = [_]u8{ 1, 2, 3, 4, 5, 6 };
@@ -1413,8 +1423,9 @@ test "Matrix remove trailing zero rows" {
 
 test "Rectangular iterator" {
     allocator = std.testing.allocator;
-    var max_vals = [_]u16{ 2, 0, 1 };
-    var iter = RectangularIterator{ .max_vals = &max_vals };
+    const max_vals = [_]u16{ 2, 0, 1 };
+    var slice_mem = [_]u16{0} ** 3;
+    var iter = RectangularIterator{ .max_vals = &max_vals, .result_slice = &slice_mem };
     try std.testing.expectEqual(@as(usize, 6), iter.size());
 
     const expected_vals_array = [_][]const u16{
@@ -1426,12 +1437,11 @@ test "Rectangular iterator" {
         &[_]u16{ 2, 0, 1 },
     };
     for (expected_vals_array) |exp_vals| {
-        if (try iter.next()) |vals| {
+        if (iter.next()) |vals| {
             try std.testing.expectEqualSlices(u16, exp_vals, vals);
-            allocator.free(vals);
         } else return error.ExpectedIteratorItem;
     }
-    try std.testing.expectEqual(@as(?[]const u16, null), try iter.next());
+    try std.testing.expectEqual(@as(?[]const u16, null), iter.next());
 }
 
 test "Solver: invalid board" {
