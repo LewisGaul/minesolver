@@ -120,16 +120,16 @@ def _find_combs(s: int, m: int, xmax: int) -> int:
     if xmax == 1:
         return fac(s) // fac(s - m)
     elif xmax == 2:
-        tot = _find_combs(s, m, xmax=1)
-        for d in range(max(1, m - s), m // 2 + 1):
+        tot = 0
+        for d in range(max(0, m - s), m // 2 + 1):
             tot += (fac(s) * fac(m)) // (
                 2 ** d * fac(d) * fac(m - 2 * d) * fac(s - m + d)
             )
         return tot
     elif xmax == 3:
-        tot = _find_combs(s, m, xmax=2)
-        for t in range(max(1, m - 2 * s), m // 3 + 1):
-            for d in range(max(1, m - 2 * t - s), (m - 3 * t) // 2 + 1):
+        tot = 0
+        for t in range(max(0, m - 2 * s), m // 3 + 1):
+            for d in range(max(0, m - 2 * t - s), (m - 3 * t) // 2 + 1):
                 tot += (fac(s) * fac(m)) // (
                     fac(2) ** d
                     * fac(3) ** t
