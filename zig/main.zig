@@ -26,9 +26,12 @@ const assert = std.debug.assert;
 
 var start_milli_time: u64 = 0;
 
-// Can't make this pub as std.log then tries to read it at comptime, and we
-// want it to be configurable via CLI flags.
-var log_level: std.log.Level = .info;
+// This is the log level read by std.log - without this it's impossible to get
+// info/debug logging in release build modes, and we control it with the
+// --verbose CLI flag anyway.
+pub const log_level: std.log.Level = .debug;
+
+var internal_log_level: std.log.Level = .info;
 
 /// Override the default logger in std.log, including a timestamp in the output.
 pub fn log(
@@ -37,7 +40,7 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (@enumToInt(message_level) <= @enumToInt(log_level)) {
+    if (@enumToInt(message_level) <= @enumToInt(internal_log_level)) {
         const milli_time = @intCast(u64, std.time.milliTimestamp()) - start_milli_time;
         const level_txt = switch (message_level) {
             // zig fmt: off
@@ -213,6 +216,7 @@ const Args = struct {
     mines: u16,
     per_cell: u8 = 1,
     debug: bool = false,
+    quiet: bool = false,
 };
 
 const CellContents = union(enum) {
@@ -1029,6 +1033,7 @@ const Solver = struct {
     }
 
     pub fn calcProbabilities(self: Self, configs: []const []const u16) !Grid(f64) {
+        std.log.debug("Calculating config probs...", .{});
         const cfg_probs = try allocator.alloc(f64, configs.len);
         for (configs) |cfg, idx| {
             var log_combs: f64 = 0;
@@ -1046,9 +1051,11 @@ const Solver = struct {
 
         var weight: f64 = 0;
         for (cfg_probs) |p| weight += p;
-        for (cfg_probs) |*p| {
+        std.log.debug("Adjusting config probs by weight {e:.2}", .{weight});
+        for (cfg_probs) |*p, i| {
             p.* = p.* / weight;
-            assert(p.* <= 1);
+            std.log.debug("Prob for config {d}: {d:.4}", .{ i, p.* });
+            assert(p.* <= 1.0001);
         }
 
         const x_size = self.board.xSize();
@@ -1069,14 +1076,16 @@ const Solver = struct {
                 try unclicked_cell_probs.append(&probs_grid.data[entry.y][entry.x]);
         }
 
+        std.log.debug("Calculating group probs from config probs...", .{});
         for (self.groups) |grp_i, i| {
             var unsafe_prob: f64 = 0;
             for (configs) |cfg_j, j| {
                 unsafe_prob += cfg_probs[j] * unsafeProb(grp_i.len, cfg_j[i], self.per_cell);
             }
+            std.log.debug("Calculated unsafe prob for group {d}: {d:.3}", .{ i, unsafe_prob });
             assert(unsafe_prob >= 0);
-            // TODO: Add in some rounding to ensure this holds!
-            // assert(unsafe_prob <= 1);
+            // TODO: Add in some rounding to ensure no higher than 1!
+            assert(unsafe_prob <= 1.0001);
             for (grp_i) |cell_idx| {
                 unclicked_cell_probs.items[cell_idx].* = unsafe_prob;
             }
@@ -1269,7 +1278,8 @@ fn parseArgs() !Args {
         clap.parseParam("<MINES>               Number of mines") catch unreachable,
         clap.parseParam("-f, --file <PATH>     Input file (defaults to stdin)") catch unreachable,
         clap.parseParam("-p, --per-cell <NUM>  Max number of mines per cell") catch unreachable,
-        clap.parseParam("-v, --verbose         Output debug logging to stderr") catch unreachable,
+        clap.parseParam("-v, --verbose         Output debug info and logging to stderr") catch unreachable,
+        clap.parseParam("-q, --quiet           Emit less output to stderr") catch unreachable,
     };
 
     // Initalize diagnostics for reporting parsing errors.
@@ -1289,7 +1299,7 @@ fn parseArgs() !Args {
     }
 
     if (clap_args.positionals().len != 1) {
-        try stderr.writeAll("Expected exactly one positional arg\n");
+        try stderr.writeAll("Expected exactly one positional arg (number of mines)\n");
         return error.InvalidArgument;
     }
 
@@ -1325,6 +1335,13 @@ fn parseArgs() !Args {
     if (clap_args.flag("--verbose")) {
         args.debug = true;
     }
+    if (clap_args.flag("--quiet")) {
+        args.quiet = true;
+    }
+    if (args.quiet and args.debug) {
+        try stderr.writeAll("--quiet and --verbose cannot be specified together\n");
+        return error.InvalidArgument;
+    }
 
     return args;
 }
@@ -1345,12 +1362,24 @@ pub fn main() !u8 {
         => return 2,
         else => return 1,
     };
-    if (args.debug) log_level = .debug;
+    if (args.debug) {
+        internal_log_level = .debug;
+    } else if (args.quiet) {
+        internal_log_level = .notice;
+    }
 
     std.log.debug(
-        "Parsed args: mines={d}, per_cell={d}, verbose={}",
-        .{ args.mines, args.per_cell, args.debug },
+        "Parsed args: mines={d}, per_cell={d}, verbose={}, quiet={}",
+        .{ args.mines, args.per_cell, args.debug, args.quiet },
     );
+
+    if (args.per_cell > 3) {
+        std.log.err(
+            "Currently unable to perform probability calculation for per_cell > 3",
+            .{},
+        );
+        return 1;
+    }
 
     const max_size = 1024 * 1024; // 1MB
     const input = args.input_file.readToEndAlloc(
@@ -1367,59 +1396,55 @@ pub fn main() !u8 {
         },
     };
 
-    try stdout.print("\n", .{});
-
     const board = try parseInputBoard(input, args.mines);
     defer board.deinit();
     try stdout.print("Board:\n{s}\n", .{try board.toStr()});
 
-    try stdout.print("\n", .{});
+    if (args.debug) {
+        std.log.info("", .{});
 
-    var matrix = try board.toMatrix();
-    defer matrix.deinit();
-    if (matrix.ySize() < 40) {
-        try stdout.print(
-            "Matrix:\n{s}\n",
+        var matrix = try board.toMatrix();
+        defer matrix.deinit();
+        std.log.info(
+            "Matrix:\n{s}",
             .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
         );
-    } else {
-        std.log.warn("Omitting large full matrix output", .{});
-    }
 
-    try stdout.print("\n", .{});
+        std.log.info("", .{});
 
-    matrix.rref();
-    if (matrix.ySize() < 40) {
-        try stdout.print(
-            "RREF matrix:\n{s}\n",
+        matrix.rref();
+        std.log.info(
+            "RREF matrix:\n{s}",
             .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
         );
-    } else {
-        std.log.warn("Omitting large RREF matrix output", .{});
     }
-
-    try stdout.print("\n", .{});
 
     const solver = try Solver.init(board, args.per_cell);
     defer solver.deinit();
-    try stdout.print(
-        "Solver matrix:\n{s}\n",
-        .{try solver.matrix.toStr(.{ .sep_idx = solver.matrix.xSize() - 1 })},
-    );
 
-    try stdout.print("\n", .{});
+    if (args.debug) {
+        std.log.info("", .{});
+        std.log.info(
+            "Solver matrix:\n{s}",
+            .{try solver.matrix.toStr(.{ .sep_idx = solver.matrix.xSize() - 1 })},
+        );
 
-    try stdout.print("Solver groups:\n", .{});
-    for (solver.groups) |group, i| {
-        try stdout.print("{d}: {d}\n", .{ i, group });
+        std.log.info("", .{});
+
+        std.log.info("Solver groups:", .{});
+        for (solver.groups) |group, i| {
+            std.log.info("{d}: {d}", .{ i, group });
+        }
     }
 
-    try stdout.print("\n", .{});
-
     const configs = try solver.findConfigs();
-    try stdout.print("Mine configurations:\n", .{});
-    for (configs) |cfg, i| {
-        try stdout.print("{d}: {d}\n", .{ i, cfg });
+
+    if (args.debug) {
+        std.log.info("", .{});
+        std.log.info("Mine configurations:", .{});
+        for (configs) |cfg, i| {
+            std.log.info("{d}: {d}", .{ i, cfg });
+        }
     }
 
     if (solver.per_cell <= 3) {
@@ -1427,9 +1452,7 @@ pub fn main() !u8 {
 
         const probs = try solver.calcProbabilities(configs);
         try stdout.print("Probabilities:\n{s}\n", .{try probs.toStr("{d:.5}", .{})});
-    } else {
-        std.log.info("Skipping probability calculation for per_cell > 3", .{});
-    }
+    } else unreachable;
 
     std.log.info("Finished", .{});
     return 0;
