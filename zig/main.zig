@@ -1447,12 +1447,10 @@ pub fn main() !u8 {
         }
     }
 
-    if (solver.per_cell <= 3) {
-        try stdout.print("\n", .{});
+    try stdout.print("\n", .{});
 
-        const probs = try solver.calcProbabilities(configs);
-        try stdout.print("Probabilities:\n{s}\n", .{try probs.toStr("{d:.5}", .{})});
-    } else unreachable;
+    const probs = try solver.calcProbabilities(configs);
+    try stdout.print("Probabilities:\n{s}\n", .{try probs.toStr("{d:.5}", .{})});
 
     std.log.info("Finished", .{});
     return 0;
