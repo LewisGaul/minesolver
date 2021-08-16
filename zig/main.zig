@@ -1049,8 +1049,14 @@ const Solver = struct {
                 const g_size = self.groups[i].len;
                 log_combs += logCombs(g_size, m_i, self.per_cell);
                 var k: u16 = 1;
-                while (k <= m_i) : (k += 1) {
+                while (k <= m_i) : (k += 1) { // Divide by m_i!
                     log_combs -= std.math.ln(@intToFloat(f64, k));
+                }
+                switch (self.mines) { // Multiply by  ( rho / (1-rho) )^m_i
+                    .Density => |rho| {
+                        log_combs += std.math.ln(rho / (1 - rho)) * @intToFloat(f64, m_i);
+                    },
+                    else => {},
                 }
             }
             cfg_probs[idx] = std.math.exp(log_combs);
@@ -1099,6 +1105,8 @@ const Solver = struct {
             }
         }
 
+        // TODO: If working with density then we need to fill in the outer group.
+
         return probs_grid;
     }
 
@@ -1125,6 +1133,15 @@ const Solver = struct {
             if (std.mem.indexOfScalar(usize, remove_col_idxs.items, x1)) |_| continue;
 
             self.matrix.getColumnIntoSlice(x1, column1);
+
+            // If the column is all zero then just drop it and don't include in
+            // a group - this corresponds to outer group with unknown number of
+            // mines.
+            if (std.mem.allEqual(isize, column1, 0)) {
+                assert(self.mines == .Density);
+                try remove_col_idxs.append(x1);
+                continue;
+            }
 
             var group = ArrayList(usize).init(allocator);
             defer group.deinit();
