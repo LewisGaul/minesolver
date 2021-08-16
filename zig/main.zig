@@ -1392,10 +1392,18 @@ pub fn main() !u8 {
         internal_log_level = .notice;
     }
 
-    std.log.debug(
-        "Parsed args: mines={d}, per_cell={d}, verbose={}, quiet={}",
-        .{ args.mines, args.per_cell, args.debug, args.quiet },
-    );
+    // Debug log the parsed args.
+    const verbosity = if (args.debug) "verbose" else if (args.quiet) "quiet" else "default";
+    switch (args.mines) {
+        .Num => |num_mines| std.log.debug(
+            "Parsed args: mines={d}, per_cell={d}, verbosity={s}",
+            .{ num_mines, args.per_cell, verbosity },
+        ),
+        .Density => |density| std.log.debug(
+            "Parsed args: density={d}, per_cell={d}, verbosity={s}",
+            .{ density, args.per_cell, verbosity },
+        ),
+    }
 
     if (args.per_cell > 3) {
         std.log.err(
