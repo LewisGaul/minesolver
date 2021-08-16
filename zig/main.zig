@@ -211,12 +211,14 @@ fn unsafeProb(s: usize, m: usize, xmax: u8) f64 {
 // Structs
 // -----------------------------------------------------------------------------
 
+const MinesInfo = union(enum) {
+    Num: u16,
+    Density: f64,
+};
+
 const Args = struct {
     input_file: File,
-    mines: union(enum) {
-        Num: u16,
-        Density: f64,
-    },
+    mines: MinesInfo,
     per_cell: u8 = 1,
     debug: bool = false,
     quiet: bool = false,
@@ -733,16 +735,14 @@ const Matrix = struct {
 
 const Board = struct {
     grid: Grid(CellContents),
-    mines: u16,
 
     const Self = @This();
 
     /// Allocates memory, but also reuses the provided memory storing the
     /// 'cells' slice, which must all be managed by caller.
-    pub fn fromFlatSlice(x_size: usize, y_size: usize, cells: []CellContents, mines: u16) !Self {
+    pub fn fromFlatSlice(x_size: usize, y_size: usize, cells: []CellContents) !Self {
         return Self{
             .grid = try Grid(CellContents).fromFlatSlice(x_size, y_size, cells),
-            .mines = mines,
         };
     }
 
@@ -764,7 +764,7 @@ const Board = struct {
 
     /// Convert a board into a set of simultaneous equations, represented in matrix
     /// form. The memory is owned by the caller.
-    pub fn toMatrix(self: Self) !Matrix {
+    pub fn toMatrix(self: Self, mines: ?u16) !Matrix {
         // Each row of the matrix corresponds to one of the simultaneous equations,
         // which come from each visible number on the board.
         // There is an additional final row corresponding to the equation for the
@@ -776,7 +776,7 @@ const Board = struct {
         // simultaneous equations, i.e. the value of the number shown in the cell
         // corresponding to that row.
         const num_columns = self.grid.count(.Unclicked) + 1;
-        const num_rows = self.grid.count(.Number) + 1;
+        const num_rows = self.grid.count(.Number) + @as(usize, if (mines) |_| 1 else 0);
         const all_matrix_cells: []isize = try allocator.alloc(isize, num_columns * num_rows);
         defer allocator.free(all_matrix_cells);
 
@@ -811,15 +811,17 @@ const Board = struct {
             row[i] = num_entry.value.Number - @intCast(isize, nbr_mines);
             j += 1;
         }
-        assert(j == num_rows - 1);
 
-        // Add the final row on the end, corresponding to the total number of mines.
-        var i: usize = 0;
-        const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
-        while (i < num_columns - 1) : (i += 1) {
-            row[i] = 1;
+        if (mines) |m| {
+            assert(j == num_rows - 1);
+            // Add the final row on the end, corresponding to the total number of mines.
+            var i: usize = 0;
+            const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
+            while (i < num_columns - 1) : (i += 1) {
+                row[i] = 1;
+            }
+            row[i] = m;
         }
-        row[i] = self.mines;
 
         return Matrix.fromFlatSlice(isize, num_columns, num_rows, all_matrix_cells);
     }
@@ -858,6 +860,7 @@ const RectangularIterator = struct {
 
 const Solver = struct {
     board: Board,
+    mines: MinesInfo,
     per_cell: u8,
     /// Each inner slice contains indexes to grid positions.
     groups: []const []const usize,
@@ -867,16 +870,18 @@ const Solver = struct {
 
     /// The board is still owned by the caller and should be independently
     /// deinitialised.
-    pub fn init(board: Board, per_cell: u8) !Self {
+    pub fn init(board: Board, mines_info: MinesInfo, per_cell: u8) !Self {
         std.log.info(
             "Initialising solver with {d} x {d} board",
             .{ board.xSize(), board.ySize() },
         );
+        const num_mines = if (mines_info == .Num) mines_info.Num else null;
         var self = Self{
             .board = board,
+            .mines = mines_info,
             .per_cell = per_cell,
             .groups = undefined,
-            .matrix = try board.toMatrix(),
+            .matrix = try board.toMatrix(num_mines),
         };
         std.log.info(
             "Initial matrix is {d} x {d}",
@@ -1235,7 +1240,7 @@ fn parseInputCell(input: []const u8) !CellContents {
     }
 }
 
-fn parseInputBoard(input: []const u8, mines: u16) !Board {
+fn parseInputBoard(input: []const u8) !Board {
     var cells_array = ArrayList(CellContents).init(allocator);
     defer cells_array.deinit();
 
@@ -1265,7 +1270,6 @@ fn parseInputBoard(input: []const u8, mines: u16) !Board {
         first_line_cols.?,
         rows,
         cells_array.items,
-        mines,
     );
 }
 
@@ -1302,11 +1306,6 @@ fn parseArgs() !Args {
         std.process.exit(0);
     }
 
-    if (clap_args.positionals().len != 1) {
-        try stderr.writeAll("Expected exactly one positional arg (number of mines)\n");
-        return error.InvalidArgument;
-    }
-
     const input_file = blk: {
         if (clap_args.option("--file")) |file| {
             break :blk std.fs.cwd().openFile(file, .{}) catch |err| {
@@ -1319,10 +1318,11 @@ fn parseArgs() !Args {
     const mines_arg_set = clap_args.option("--mines") != null;
     const density_arg_set = clap_args.option("--infinite-density") != null;
     if (mines_arg_set and density_arg_set or !mines_arg_set and !density_arg_set) {
-        try stderr.writeAll("Exactly one of '--mines' and '--infinite-density' args expected");
+        try stderr.writeAll("Exactly one of '--mines' and '--infinite-density' args expected\n");
+        return error.InvalidArgument;
     }
 
-    const mines: std.meta.fieldInfo(Args, .mines).field_type = blk: {
+    const mines: MinesInfo = blk: {
         if (clap_args.option("--mines")) |num_mines_str| {
             const num_mines = std.fmt.parseUnsigned(u16, num_mines_str, 10) catch |err| {
                 try stderr.writeAll("Expected positive integer number of mines\n");
@@ -1420,15 +1420,14 @@ pub fn main() !u8 {
         },
     };
 
-    // TODO: Assuming mines is given
-    const board = try parseInputBoard(input, args.mines.Num);
+    const board = try parseInputBoard(input);
     defer board.deinit();
     try stdout.print("Board:\n{s}\n", .{try board.toStr()});
 
     if (args.debug) {
         std.log.info("", .{});
 
-        var matrix = try board.toMatrix();
+        var matrix = try board.toMatrix(if (args.mines == .Num) args.mines.Num else null);
         defer matrix.deinit();
         std.log.info(
             "Matrix:\n{s}",
@@ -1444,7 +1443,7 @@ pub fn main() !u8 {
         );
     }
 
-    const solver = try Solver.init(board, args.per_cell);
+    const solver = try Solver.init(board, args.mines, args.per_cell);
     defer solver.deinit();
 
     if (args.debug) {
