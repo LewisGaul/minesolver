@@ -1,0 +1,173 @@
+
+
+
+s = 8   m = 6   =>  density = 0.75
+
+
+Place 2 mines in a cell (4 mines remaining):
+
+(2, 0, 0, 0, 0, 0, 0, 0)   =>   8  *  6! / (2! * 4!)  =  120
+
+
+If you then place the remaining 4 mines anywhere in the 8 cells...
+
+(1, 1, 1, 1, 0, 0, 0, 0)   =>  8! / 4!                            =  1,680
+
+(2, 1, 1, 0, 0, 0, 0, 0)   =>  8! / (2! * 5!)  *  4! / 2!         =  2,016
+(2, 2, 0, 0, 0, 0, 0, 0)   =>  8! / (2! * 6!)  *  4! / (2! * 2!)  =    168
+
+(3, 1, 0, 0, 0, 0, 0, 0)   =>  8! / 6!  *  4! / 3!                =    224
+
+(4, 0, 0, 0, 0, 0, 0, 0)   =>                                     =      8
+
+
+The total number of combinations *should* add up to
+    "<all combs> - <xmax=1 combs>"  =  s^m - s! / (s-m)!  =  262,144 - 20,160  =  92.3 %
+
+
+However, if you multiply the above it results in double-counting the paired cells.
+
+Consider pairing (2, 0, ...) with (4, 0, ...), then you have one of
+
+(6, 0, 0, ...)
+(4, 2, 0, ...)
+
+and  120 * 8 = 960  combs.
+
+These should have 8 and 840 combs respectively, and we haven't even counted
+the pairing with (2, 2, 0, ...) yet!
+
+
+It's even worse - there's double counting everywhere... Consider pairing
+(1, 1, ...), which should give only (2, 1, 1, ...) and (3, 1, 1, ...), and
+nothing else can pair to give either of these. But the combs adds up to 201,600
+compared to expected 100,800 - exactly double.
+
+
+-------------
+
+What about instead of trying to place the remaining 4 mines anywhere in the 8
+cells, we instead restrict to the remaining 7 cells, hopefully giving the
+combs for there being at least one double-mine.
+
+(1, 1, 1, 1, 0, 0, 0)   =>  7! / 3!                            =    840
+
+(2, 1, 1, 0, 0, 0, 0)   =>  7! / (2! * 4!)  *  4! / 2!         =  1,260
+(2, 2, 0, 0, 0, 0, 0)   =>  7! / (2! * 5!)  *  4! / (2! * 2!)  =    126
+
+(3, 1, 0, 0, 0, 0, 0)   =>  7! / 5!  *  4! / 3!                =    168
+
+(4, 0, 0, 0, 0, 0, 0)   =>                                     =      7
+
+TOTAL:  7^4  =  2401
+
+
+120 * 2401  =  288,120   >  s^m !!!
+
+
+120 *  840  =  100,800     as expected for (2, 1, 1, 1, 1, 0, 0, 0)
+120 *  168  =   20,160     as expected for (3, 2, 1, 0, 0, 0, 0, 0)
+120 *    7  =      840     as expected for (4, 2, 0, 0, 0, 0, 0, 0)
+
+120 * 1260  =  151,200     double exp for  (2, 2, 1, 1, 0, 0, 0, 0)
+120 *  126  =   15,120     triple exp for  (2, 2, 2, 0, 0, 0, 0, 0)
+
+
+Overall actual:    288,120  =  109.91 %
+Overall expected:  241,984  =   92.31 %
+
+
+The problem here is double-counting the occurrences of double mines. Where we
+list the combinations here we can see the double counting, but in general we'd
+just be using the s^m calculation (for performance) so wouldn't know how much
+double counting there is.
+
+We could try calculating how much double counting there is - it's the cases
+where a second double-mine cell appears:
+
+Place 2 mines in a cell as before (4 mines remaining):
+(2, 0, 0, 0, 0, 0, 0, 0)   =>   8  *  6! / (2! * 4!)  =  120
+
+Place a further 2 mines in a different cell (2 mines remaining):
+(2, 0, 0, 0, 0, 0, 0)   =>   7  *  4! / (2! * 2!)  =  42
+
+Since we're placing *two* double-mines, we need to divide by 2 when calculating
+the total combinations, i.e. 120 * 42 / 2 = 2520.
+
+Place remaining mines anywhere in remaining 6 cells:
+(1, 1, 0, 0, 0, 0)   =>   30
+(2, 0, 0, 0, 0, 0)   =>    6
+
+
+120 * 42 / 2 * 36  =  90,720
+
+
+120 * 42 / 2 * 30  =  75,600   as expected for (2, 2, 1, 1, 0, 0, 0, 0)
+120 * 42 / 2 *  6  =  15,120   triple exp for  (2, 2, 2, 0, 0, 0, 0, 0) as before
+
+
+If we can find a justification for halving this then we have what we expect
+apart from subtracting 1 too many (2, 2, 2, 0, ...), as expected.
+
+Actual:    288,120 - 90,720                        =  197,400
+Expected:  100,800 + 75,600 + 5040 + 20,160 + 840  =  202,440
+Difference:  202,440 - 197,400  =  5040   <- triple double-mine configuration combs
+
+
+Overall actual:    197,400  =  75.30 %
+Overall expected:  241,984  =  92.31 %
+
+
+If we keep going back an forth adding and subtracting with increasing number of
+double-mine cells (or <n>-mine cells) then we arrive at an exact number of
+combinations. The next step is triple double-mine combs:
+
+Place 2 mines in a cell as before (4 mines remaining):
+(2, 0, 0, 0, 0, 0, 0, 0)   =>   8  *  6! / (2! * 4!)  =  120
+
+Place a further 2 mines in a different cell (2 mines remaining):
+(2, 0, 0, 0, 0, 0, 0)   =>   7  *  4! / (2! * 2!)  =  42
+
+Place the last 2 mines in a different cell:
+(2, 0, 0, 0, 0, 0)   =>   6
+
+Since we're placing *three* double-mines, we need to divide by 3! when
+calculating the total combinations, i.e. 120 * 42 * 6 / 3! = 5040.
+
+
+Overall actual:    202,440  =  77.22 %
+Overall expected:  241,984  =  92.31 %
+
+
+This gives us the exact number of combinations for configurations that contain
+at least one double-mine cell (with no restriction on other cells). However, it
+does not count the combinations that contain a higher number of mines but
+*don't* contain a double-mine cell, e.g. (3, 1, ...).
+
+There are two ways we could include an approximation of these combs. We could
+either use the approach above, where we need to exclude combs that contain a
+double-mine cell (or <n>-mine in general), or we could just include the case
+where all remaining cells are single-mine.
+
+The simpler case is the latter:
+
+Place 3 mines in a cell (3 mines remaining):
+(3, 0, 0, 0, 0, 0, 0, 0)   =>   8  *  6! / (3! * 3!)  =  160
+
+Only allow single-mines in the remaining cells:
+(1, 1, 1, 0, 0, 0, 0)  =>  7! / 4!  =  210
+
+Total:  160 * 210  =  33,600   as expected
+
+
+Overall actual:    236,040  =  90.04 %
+Overall expected:  241,984  =  92.31 %
+
+
+What we're missing at this point is the following:
+
+(3, 3, 0, 0, 0, 0, 0, 0)   =>    560  =  0.2 %
+(4, 1, 1, 0, 0, 0, 0, 0)   =>  5,040  =  1.9 %
+(5, 1, 0, 0, 0, 0, 0, 0)   =>    336  =  0.1 %
+(6, 0, 0, 0, 0, 0, 0, 0)   =>      8  =  0.003 %
+
