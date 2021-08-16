@@ -213,7 +213,10 @@ fn unsafeProb(s: usize, m: usize, xmax: u8) f64 {
 
 const Args = struct {
     input_file: File,
-    mines: u16,
+    mines: union(enum) {
+        Num: u16,
+        Density: f64,
+    },
     per_cell: u8 = 1,
     debug: bool = false,
     quiet: bool = false,
@@ -1274,12 +1277,13 @@ fn parseArgs() !Args {
     // First we specify what parameters our program can take.
     // We can use 'parseParam()' to parse a string to a 'Param(Help)'.
     const params = comptime [_]clap.Param(clap.Help){
-        clap.parseParam("-h, --help            Display this help and exit") catch unreachable,
-        clap.parseParam("<MINES>               Number of mines") catch unreachable,
-        clap.parseParam("-f, --file <PATH>     Input file (defaults to stdin)") catch unreachable,
-        clap.parseParam("-p, --per-cell <NUM>  Max number of mines per cell") catch unreachable,
-        clap.parseParam("-v, --verbose         Output debug info and logging to stderr") catch unreachable,
-        clap.parseParam("-q, --quiet           Emit less output to stderr") catch unreachable,
+        clap.parseParam("-h, --help                    Display this help and exit") catch unreachable,
+        clap.parseParam("-f, --file <PATH>             Input file (defaults to stdin)") catch unreachable,
+        clap.parseParam("-m, --mines <MINES>           Number of mines") catch unreachable,
+        clap.parseParam("-d, --infinite-density <VAL>  Density of mines on infinite board") catch unreachable,
+        clap.parseParam("-p, --per-cell <NUM>          Max number of mines per cell") catch unreachable,
+        clap.parseParam("-v, --verbose                 Output debug info and logging to stderr") catch unreachable,
+        clap.parseParam("-q, --quiet                   Emit less output to stderr") catch unreachable,
     };
 
     // Initalize diagnostics for reporting parsing errors.
@@ -1312,15 +1316,35 @@ fn parseArgs() !Args {
         } else break :blk std.io.getStdIn();
     };
 
-    const mines_arg = clap_args.positionals()[0];
-    const mines = std.fmt.parseUnsigned(u16, mines_arg, 10) catch |err| {
-        try stderr.writeAll("Expected positive integer number of mines\n");
-        return err;
-    };
-    if (mines == 0) {
-        try stderr.writeAll("Expected positive integer number of mines\n");
-        return error.InvalidArgument;
+    const mines_arg_set = clap_args.option("--mines") != null;
+    const density_arg_set = clap_args.option("--infinite-density") != null;
+    if (mines_arg_set and density_arg_set or !mines_arg_set and !density_arg_set) {
+        try stderr.writeAll("Exactly one of '--mines' and '--infinite-density' args expected");
     }
+
+    const mines: std.meta.fieldInfo(Args, .mines).field_type = blk: {
+        if (clap_args.option("--mines")) |num_mines_str| {
+            const num_mines = std.fmt.parseUnsigned(u16, num_mines_str, 10) catch |err| {
+                try stderr.writeAll("Expected positive integer number of mines\n");
+                return err;
+            };
+            if (num_mines == 0) {
+                try stderr.writeAll("Expected positive integer number of mines\n");
+                return error.InvalidArgument;
+            }
+            break :blk .{ .Num = num_mines };
+        } else if (clap_args.option("--infinite-density")) |density_str| {
+            const density = std.fmt.parseFloat(f64, density_str) catch |err| {
+                try stderr.writeAll("Expected mines density between 0 and 1\n");
+                return err;
+            };
+            if (density <= 0 or density >= 1) {
+                try stderr.writeAll("Expected mines density between 0 and 1\n");
+                return error.InvalidArgument;
+            }
+            break :blk .{ .Density = density };
+        } else unreachable;
+    };
 
     var args = Args{ .input_file = input_file, .mines = mines };
 
@@ -1396,7 +1420,8 @@ pub fn main() !u8 {
         },
     };
 
-    const board = try parseInputBoard(input, args.mines);
+    // TODO: Assuming mines is given
+    const board = try parseInputBoard(input, args.mines.Num);
     defer board.deinit();
     try stdout.print("Board:\n{s}\n", .{try board.toStr()});
 
