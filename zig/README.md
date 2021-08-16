@@ -23,7 +23,7 @@ The following cell representations are used for input boards:
 
 Example usages:
 ```
-$time ./zig-out/bin/zig-main -f example2.txt 8 2>/dev/null
+$time ./zig-out/bin/zig-main -f example2.txt --mines 8 2>/dev/null
 
 Board:
 # 2 # # #
@@ -86,7 +86,7 @@ sys     0m0.000s
 
 
 ```
-$time ./zig-out/bin/zig-main -f example3.txt 99 --per-cell 3 >/dev/null
+$time ./zig-out/bin/zig-main -f example3.txt --mines 99 --per-cell 3 >/dev/null
  0.005 [ WARN]: Omitting large full matrix output
  0.006 [ WARN]: Omitting large RREF matrix output
  0.006 [ INFO]: Initialising solver with 30 x 16 board

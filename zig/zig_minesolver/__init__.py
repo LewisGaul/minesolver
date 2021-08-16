@@ -2,13 +2,19 @@ __all__ = ("get_board_probs",)
 
 import pathlib
 import subprocess
-from typing import List
+from typing import List, Optional
 
 
 THIS_DIR = pathlib.Path(__file__).parent
 
 
-def get_board_probs(board: str, mines: int, *, per_cell: int = 1) -> List[List[float]]:
+def get_board_probs(
+    board: str,
+    *,
+    mines: Optional[int] = None,
+    density: Optional[float] = None,
+    per_cell: int = 1,
+) -> List[List[float]]:
     """
     Get probabilities for a minesweeper board.
 
@@ -21,9 +27,16 @@ def get_board_probs(board: str, mines: int, *, per_cell: int = 1) -> List[List[f
 
     Returns a 2-D list representation of the board, where each cell is the
     probability of the cell being a mine, between 0 and 1.
+
+    Either a number of mines or a density of mines must be given.
     """
+    cmd = [str(THIS_DIR / "zig-main"), "--per-cell", str(per_cell)]
+    if mines is not None:
+        cmd += ["--mines", str(mines)]
+    if density is not None:
+        cmd += ["--infinite-density", str(density)]
     proc = subprocess.run(
-        [str(THIS_DIR / "zig-main"), str(mines), "--per-cell", str(per_cell)],
+        cmd,
         input=board,
         universal_newlines=True,
         stdout=subprocess.PIPE,
