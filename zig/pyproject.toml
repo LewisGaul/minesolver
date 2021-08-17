@@ -1,7 +1,6 @@
 # BUILD
 # =====
 [build-system]
-# Minimum requirements for the build system to execute.
 build-backend = "setuptools.build_meta"
 requires = [
   "setuptools >= 42",
@@ -9,14 +8,8 @@ requires = [
   # "ziglang == 0.8",
 ]
 
-[metadata]
-name = "zig_minesolver"
-version = "0.1.0"
-description = "Minesweeper solver in Zig"
-
-[options]
-packages = "zig_minesolver"
-install_requires = []
+# NOTE: Should be using the 'project' table as per PEP-631, but it's unclear
+#       whether this is supported by setuptools yet...
 
 
 # TOOLS

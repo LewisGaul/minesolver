@@ -1,20 +1,6 @@
-import distutils.command.build
-import logging
-import pathlib
-import shlex
-import shutil
-import subprocess
-import sys
-import tempfile
 import textwrap
 
 import setuptools
-
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
-
-THIS_DIR = pathlib.Path(__file__).parent
 
 
 long_description = textwrap.dedent(
@@ -42,7 +28,7 @@ long_description = textwrap.dedent(
     ... # 2 # 4 #
     ... # # # # #
     ... \"""
-    >>> probs = zig_minesolver.get_board_probs(board, 8)
+    >>> probs = zig_minesolver.get_board_probs(board, mines=8)
     >>> print("\n".join(str(x) for x in probs))
     [0.27108, 0.0, 0.27108, 0.31325, 0.31325]
     [0.48594, 0.48594, 0.48594, 0.31325, 0.31325]
@@ -55,43 +41,23 @@ long_description = textwrap.dedent(
 )
 
 
-def compile_zig_project():
-    with tempfile.TemporaryDirectory(prefix="zig-build-") as tmpdir:
-        cmd = [
-            sys.executable,
-            "-m",
-            "ziglang",
-            "build",
-            "-Drelease-safe",
-            "--prefix",
-            tmpdir,
-        ]
-        logger.debug("Running command: %s", " ".join(shlex.quote(x) for x in cmd))
-        subprocess.run(cmd, check=True, cwd=THIS_DIR)
-
-        exe = pathlib.Path(tmpdir) / "bin" / "zig-main"
-        if not exe.exists():
-            exe = pathlib.Path(tmpdir) / "bin" / "zig-main.exe"
-            assert exe.exists()
-
-        dest = THIS_DIR / "zig_nestedtext"
-        logger.info("Copying compiled Zig executable from %s to %s", exe, dest)
-        shutil.copy2(exe, dest)
+# TODO: Currently unable to build as part of a pip install, reliant on
+#  availability of wheels.
 
 
-class my_build(distutils.command.build.build):
-    """
-    Add custom steps into the build, which is executed when running 'pip install'.
-    """
-
-    def run(self):
-        compile_zig_project()
-        super().run()
+# class my_build(distutils.command.build.build):
+#     """
+#     Add custom steps into the build, which is executed when running 'pip install'.
+#     """
+#
+#     def run(self):
+#         compile_zig_project()
+#         super().run()
 
 
 setuptools.setup(
     name="zig_minesolver",
-    version="0.1.0",
+    version="0.1.1",
     author="Lewis Gaul",
     maintainer="Lewis Gaul",
     description="Minesweeper solver in Zig",
@@ -110,5 +76,5 @@ setuptools.setup(
         "Programming Language :: Python :: 3.9",
         "Development Status :: 3 - Alpha",
     ],
-    zip_safe=False,  # It may be safe, but force no zip for now.
+    zip_safe=False,
 )

@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+
+import argparse
+import itertools
+import logging
+import os
+import pathlib
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Optional
+
+
+THIS_DIR = pathlib.Path(__file__).parent
+
+THIS_PLATFORM = [x for x in ("win", "linux", "darwin") if sys.platform.startswith(x)][0]
+
+SUPPORTED_PLATFORMS = ["windows", "linux", "macos"]
+SUPPORTED_ARCHES = ["x86_64", "i386"]
+
+
+def get_zig_target_name(plat: str, arch: str) -> str:
+    return f"{arch}-{plat}"
+
+
+def get_wheel_platform_tag(plat: str, arch: str) -> str:
+    # See https://packaging.python.org/specifications/platform-compatibility-tags/
+    if plat == "windows" and arch == "x86_64":
+        return "win_amd64"
+    elif plat == "windows" and arch == "i386":
+        return "win32"
+    elif plat == "linux" and arch == "x86_64":
+        return "manylinux1_x86_64"
+    elif plat == "linux" and arch == "i386":
+        return "manylinux1_i686"
+    elif plat == "macos" and arch == "x86_64":
+        return "macosx_10_9_x86_64"
+    else:
+        raise ValueError(f"Unsupported plat/arch: {plat}, {arch}")
+
+
+def compile_zig_project(exe_dest, target: Optional[str] = None) -> str:
+    """
+    Compile the Zig code to produce an executable.
+
+    :param exe_dest:
+        The directory to store the executable in.
+    :param target:
+        The '<arch>-<platform>' tag to build for.
+    :return:
+        The full path to the created executable.
+    """
+    with tempfile.TemporaryDirectory(prefix="zig-build-") as tmpdir:
+        cmd = [
+            "zig",
+            "build",
+            "-Drelease-safe",
+            "--prefix",
+            tmpdir,
+        ]
+        if target:
+            cmd.append(f"-Dtarget={target}")
+        logging.debug("Running command: %s", " ".join(shlex.quote(x) for x in cmd))
+        subprocess.run(cmd, check=True, cwd=THIS_DIR)
+
+        exe = pathlib.Path(tmpdir) / "bin" / "zig-main"
+        if not exe.exists():
+            exe = pathlib.Path(tmpdir) / "bin" / "zig-main.exe"
+            assert exe.exists()
+
+        logging.info("Copying compiled Zig executable from %s to %s", exe, exe_dest)
+        return shutil.copy2(exe, exe_dest)
+
+
+def create_wheel(plat: str, arch: str) -> None:
+    """Create a wheel for a given platform/arch."""
+    logging.info("Creating wheel for %s-%s", plat, arch)
+    exe_path = compile_zig_project(
+        THIS_DIR / "zig_minesolver", get_zig_target_name(plat, arch)
+    )
+    try:
+        cmd = [
+            sys.executable,
+            "setup.py",
+            "bdist_wheel",
+            "--plat-name",
+            get_wheel_platform_tag(plat, arch),
+        ]
+        logging.debug("Running command: %s", " ".join(shlex.quote(x) for x in cmd))
+        subprocess.run(cmd, check=True, cwd=THIS_DIR, stdout=subprocess.PIPE)
+
+    finally:
+        logging.debug("Removing executable %s", exe_path)
+        os.remove(exe_path)
+
+        build_dir = THIS_DIR / "build"
+        logging.debug("Removing build dir %s", build_dir)
+        shutil.rmtree(build_dir)
+
+
+def main(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--plat",
+        choices=SUPPORTED_PLATFORMS,
+        default=THIS_PLATFORM,
+        help="Platform to build for",
+    )
+    parser.add_argument(
+        "--arch",
+        choices=SUPPORTED_ARCHES,
+        default="x86_64",
+        help="Architecture to build for",
+    )
+    parser.add_argument(
+        "--all", "-a", action="store_true", help="Make wheels for all supported targets"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable debug logging"
+    )
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+
+    if args.all:
+        for plat, arch in itertools.product(SUPPORTED_PLATFORMS, SUPPORTED_ARCHES):
+            try:
+                get_wheel_platform_tag(plat, arch)
+            except ValueError:
+                logging.debug("Skipping unsupported plat/arch: %s, %s", plat, arch)
+                continue
+            create_wheel(plat, arch)
+    else:
+        create_wheel(args.plat, args.arch)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
