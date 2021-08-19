@@ -1085,6 +1085,9 @@ const Solver = struct {
             }
             const num_nbr_idxs = num_nbr_idxs_buf[0..num_nbr_idxs_idx];
 
+            // Don't include outer group if using mine density.
+            if (num_nbr_idxs.len == 0 and self.mines == .Density) continue;
+
             // Check whether this combination of numbers has already been found.
             var grp_idx: usize = 0;
             while (grp_idx < groups.items.len) : (grp_idx += 1) {
@@ -1309,6 +1312,7 @@ const Solver = struct {
 
         var weight: f64 = 0;
         for (cfg_probs) |p| weight += p;
+        if (weight == std.math.inf(f64)) return error.TooManyCombinations;
         std.log.debug("Adjusting config probs by weight {e:.2}", .{weight});
         for (cfg_probs) |*p, i| {
             p.* = p.* / weight;
