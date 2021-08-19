@@ -338,8 +338,10 @@ fn Grid(comptime T: type) type {
             return g.data[y][x];
         }
 
-        pub fn getCellAtIdx(g: Self, idx: usize) T {
-            return g.getCell(idx % g.xSize(), idx / g.xSize());
+        pub fn getEntryAtIdx(g: Self, idx: usize) Entry {
+            const x = idx % g.xSize();
+            const y = idx / g.xSize();
+            return .{ .x = x, .y = y, .value = g.getCell(x, y) };
         }
 
         /// The 'idx' argument must be in range of the grid bounds, as given by
@@ -420,8 +422,32 @@ fn Grid(comptime T: type) type {
             return .{ .grid = g };
         }
 
+        /// Stores the result in the provided buffer.
+        pub fn getNeighbours(g: Self, x: usize, y: usize, buf: *[8]Entry) []const Entry {
+            var x_min: usize = x;
+            var x_max: usize = x;
+            var y_min: usize = y;
+            var y_max: usize = y;
+            if (x > 0) x_min -= 1;
+            if (x < g.xSize() - 1) x_max += 1;
+            if (y > 0) y_min -= 1;
+            if (y < g.ySize() - 1) y_max += 1;
+
+            var i: usize = x_min;
+            var nbr_idx: usize = 0;
+            while (i <= x_max) : (i += 1) {
+                var j: usize = y_min;
+                while (j <= y_max) : (j += 1) {
+                    if (i == x and j == y) continue;
+                    buf[nbr_idx] = .{ .x = i, .y = j, .value = g.getCell(i, j) };
+                    nbr_idx += 1;
+                }
+            }
+            return buf[0..nbr_idx];
+        }
+
         /// Allocates the slice - memory owned by the caller.
-        pub fn getNeighbours(g: Self, x: usize, y: usize) error{OutOfMemory}![]const Entry {
+        pub fn getNeighboursAlloc(g: Self, x: usize, y: usize) error{OutOfMemory}![]const Entry {
             var x_min: usize = x;
             var x_max: usize = x;
             var y_min: usize = y;
@@ -434,8 +460,8 @@ fn Grid(comptime T: type) type {
             var nbrs = ArrayList(Entry).init(allocator);
             try nbrs.ensureTotalCapacity(num_nbrs);
             var i: usize = x_min;
-            var j: usize = y_min;
             while (i <= x_max) : (i += 1) {
+                var j: usize = y_min;
                 while (j <= y_max) : (j += 1) {
                     if (i == x and j == y) continue;
                     nbrs.appendAssumeCapacity(
@@ -804,6 +830,7 @@ const Solver = struct {
         matrix: Matrix,
         /// Each inner slice contains indexes to grid positions.
         groups: []const []const usize,
+        /// Each inner slice contains a number of mines for each group.
         configs: []const []const u16,
     };
 
@@ -924,7 +951,71 @@ const Solver = struct {
 
     /// Convert a board into a set of simultaneous equations for equivalence
     /// groups, represented in matrix form. The memory is owned by the caller.
-    pub fn findGroupsMatrix(self: *Self) !Matrix {}
+    pub fn findGroupsMatrix(self: *Self) !Matrix {
+        self.computed_state.?.groups = try findGroups();
+        // TODO
+    }
+
+    pub fn findGroups(self: *Self) ![]const []const usize {
+        // - Iterate over all cells in the board
+        // - Skip over cells that aren't unclicked (prob will be zero)
+        // - Find the indices of neighbouring displayed numbers
+        // - Check whether this combination of nbr nums has been found already
+        //    - If it has, associate this cell with the corresponding group ID
+        //    - Otherwise create a new group and associate this cell with it
+        // Should end up with:
+        //  - An array of groups (where elements correspond to board cell positions)
+
+        var groups = ArrayList(ArrayList(usize)).init(allocator);
+        defer {
+            for (groups.items) |g| g.deinit();
+            groups.deinit();
+        }
+        var group_num_idxs = ArrayList([]const usize).init(allocator);
+        defer {
+            for (group_num_idxs.items) |g| allocator.free(g);
+            group_num_idxs.deinit();
+        }
+
+        var nbrs_buf: [8]Grid(CellContents).Entry = undefined;
+        var num_nbr_idxs_buf: [8]usize = undefined;
+        var cell_idx: usize = 0;
+        while (cell_idx < self.board.xSize() * self.board.ySize()) : (cell_idx += 1) {
+            const entry = self.board.grid.getEntryAtIdx(cell_idx);
+            if (entry.value != .Unclicked) continue;
+
+            // Create a slice of indices of number neighbours.
+            const nbrs = self.board.grid.getNeighbours(entry.x, entry.y, &nbrs_buf);
+            var num_nbr_idxs_idx: usize = 0;
+            for (nbrs) |nbr| {
+                if (nbr.value == .Number) {
+                    num_nbr_idxs_buf[num_nbr_idxs_idx] = nbr.x + self.board.xSize() * nbr.y;
+                    num_nbr_idxs_idx += 1;
+                }
+            }
+            const num_nbr_idxs = num_nbr_idxs_buf[0..num_nbr_idxs_idx];
+
+            // Check whether this combination of numbers has already been found.
+            var grp_idx: usize = 0;
+            while (grp_idx < groups.items.len) : (grp_idx += 1) {
+                if (std.mem.eql(usize, num_nbr_idxs, group_num_idxs.items[grp_idx])) {
+                    try groups.items[grp_idx].append(cell_idx);
+                    break;
+                }
+            } else {
+                try groups.append(ArrayList(usize).init(allocator));
+                try groups.items[grp_idx].append(cell_idx);
+                try group_num_idxs.append(try allocator.dupe(usize, num_nbr_idxs));
+            }
+        }
+
+        const groups_slice = try allocator.alloc([]const usize, groups.items.len);
+        errdefer allocator.free(groups_slice);
+        for (groups.items) |*grp, i| {
+            groups_slice[i] = grp.toOwnedSlice();
+        }
+        return groups_slice;
+    }
 
     // TODO: Remove this function - instead use findGroupsMatrix().
     fn reduceToGroups(self: *Self) !void {
@@ -1050,6 +1141,7 @@ const Solver = struct {
         if (free_col_idxs.len == 0) {
             const config = try allocator.alloc(u16, cs.groups.len);
             for (config) |*val, i| {
+                if (rhs_vec.getCell(0, i) < 0) return error.InvalidMatrixEquations;
                 val.* = @intCast(u16, rhs_vec.getCell(0, i));
             }
             std.log.info("Found a unique solution", .{});
@@ -1501,6 +1593,15 @@ pub fn main() !u8 {
             .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
         );
 
+        const groups = try solver.findGroups();
+
+        std.log.info("", .{});
+
+        std.log.info("Solver groups:", .{});
+        for (groups) |grp, i| {
+            std.log.info("{d}: {d}", .{ i, grp });
+        }
+
         try solver.prepare();
         const cs = &solver.computed_state.?;
 
@@ -1513,8 +1614,8 @@ pub fn main() !u8 {
         std.log.info("", .{});
 
         std.log.info("Solver groups:", .{});
-        for (cs.groups) |group, i| {
-            std.log.info("{d}: {d}", .{ i, group });
+        for (cs.groups) |grp, i| {
+            std.log.info("{d}: {d}", .{ i, grp });
         }
     }
 
@@ -1629,11 +1730,11 @@ test "Solver: invalid board" {
     const board = try parseInputBoard(
         \\ # 1 2
         \\ # # #
-    , 2);
+    );
     defer board.deinit();
 
-    const solver = try Solver.init(board, 1);
+    var solver = Solver.init(board, .{.Num=1}, 1);
     defer solver.deinit();
 
-    try std.testing.expectError(error.InvalidMatrixEquations, solver.findConfigs());
+    try std.testing.expectError(error.InvalidMatrixEquations, solver.solve());
 }
