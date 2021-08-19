@@ -824,14 +824,22 @@ const Solver = struct {
     board: Board,
     mines: MinesInfo,
     per_cell: u8,
-    computed_state: ?ComputedState = null,
+    computed_state: ComputedState = .{},
 
     const ComputedState = struct {
-        matrix: Matrix,
+        matrix: ?Matrix = null,
         /// Each inner slice contains indexes to grid positions.
-        groups: []const []const usize,
+        groups: ?[]const []const usize = null,
+        /// TODO
+        numbers: ?[]const Number = null,
         /// Each inner slice contains a number of mines for each group.
-        configs: []const []const u16,
+        configs: ?[]const []const u16 = null,
+
+        const Number = struct {
+            idx: usize,
+            value: u8,
+            groups: ArrayList(usize),
+        };
     };
 
     const Self = @This();
@@ -847,24 +855,44 @@ const Solver = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.computed_state) |state| {
-            for (state.groups) |group| {
-                allocator.free(group);
+        if (self.computed_state.groups) |groups| {
+            for (groups) |grp| {
+                allocator.free(grp);
             }
-            allocator.free(state.groups);
-            state.matrix.deinit();
-            self.computed_state = null;
+            allocator.free(groups);
+            self.computed_state.groups = null;
+        }
+
+        if (self.computed_state.numbers) |numbers| {
+            for (numbers) |num| {
+                num.groups.deinit();
+            }
+            allocator.free(numbers);
+            self.computed_state.numbers = null;
+        }
+
+        if (self.computed_state.matrix) |matrix| {
+            matrix.deinit();
+        }
+
+        if (self.computed_state.configs) |configs| {
+            for (configs) |cfg| {
+                allocator.free(cfg);
+            }
+            allocator.free(configs);
+            self.computed_state.configs = null;
         }
     }
 
     /// High-level function to perform all steps required to solve the board,
     /// returning a grid of probabilities.
     pub fn solve(self: *Self) !Grid(f64) {
-        if (self.computed_state == null) {
+        if (self.computed_state.matrix == null or self.computed_state.groups == null) {
             try self.prepare();
-            assert(self.computed_state != null);
+            assert(self.computed_state.matrix != null);
+            assert(self.computed_state.groups != null);
         }
-        self.computed_state.?.configs = try self.findConfigs();
+        self.computed_state.configs = try self.findConfigs();
         return self.calcProbabilities();
     }
 
@@ -872,16 +900,15 @@ const Solver = struct {
     /// matrix and equivalence groups.
     pub fn prepare(self: *Self) !void {
         std.log.info("Preparing solver with {d} x {d} board", .{ self.board.xSize(), self.board.ySize() });
-        self.computed_state = @as(ComputedState, undefined);
-        const cs = &self.computed_state.?;
+        const cs = &self.computed_state;
         cs.matrix = try self.findFullMatrix();
-        std.log.info("Initial matrix is {d} x {d}", .{ cs.matrix.xSize(), cs.matrix.ySize() });
+        std.log.info("Initial matrix is {d} x {d}", .{ cs.matrix.?.xSize(), cs.matrix.?.ySize() });
         try self.reduceToGroups();
-        std.log.info("Reduced matrix to groups, {d} columns", .{cs.matrix.xSize()});
-        cs.matrix.rref();
+        std.log.info("Reduced matrix to groups, {d} columns", .{cs.matrix.?.xSize()});
+        cs.matrix.?.rref();
         std.log.info("Reduced matrix to RREF", .{});
-        cs.matrix.removeTrailingZeroRows();
-        std.log.info("Removed zero-rows from matrix, {d} rows", .{cs.matrix.ySize()});
+        cs.matrix.?.removeTrailingZeroRows();
+        std.log.info("Removed zero-rows from matrix, {d} rows", .{cs.matrix.?.ySize()});
     }
 
     /// Convert a board into a set of simultaneous equations, represented in matrix
@@ -952,8 +979,10 @@ const Solver = struct {
     /// Convert a board into a set of simultaneous equations for equivalence
     /// groups, represented in matrix form. The memory is owned by the caller.
     pub fn findGroupsMatrix(self: *Self) !Matrix {
-        self.computed_state.?.groups = try findGroups();
-        // TODO
+        self.computed_state.groups = try findGroups();
+        // TODO:
+        // - [in findGroups()] Store found numbers and the neighbouring groups
+        // - Iterate over numbers, creating a matrix row for each
     }
 
     pub fn findGroups(self: *Self) ![]const []const usize {
@@ -975,6 +1004,11 @@ const Solver = struct {
         defer {
             for (group_num_idxs.items) |g| allocator.free(g);
             group_num_idxs.deinit();
+        }
+        var numbers = ArrayList(ComputedState.Number).init(allocator);
+        defer {
+            for (numbers.items) |n| n.groups.deinit();
+            numbers.deinit();
         }
 
         var nbrs_buf: [8]Grid(CellContents).Entry = undefined;
@@ -999,15 +1033,33 @@ const Solver = struct {
             var grp_idx: usize = 0;
             while (grp_idx < groups.items.len) : (grp_idx += 1) {
                 if (std.mem.eql(usize, num_nbr_idxs, group_num_idxs.items[grp_idx])) {
-                    try groups.items[grp_idx].append(cell_idx);
                     break;
                 }
             } else {
+                // Start a new group.
                 try groups.append(ArrayList(usize).init(allocator));
-                try groups.items[grp_idx].append(cell_idx);
                 try group_num_idxs.append(try allocator.dupe(usize, num_nbr_idxs));
+                for (num_nbr_idxs) |num_idx| {
+                    // Check whether this number has already been found.
+                    var i: usize = 0;
+                    while (i < numbers.items.len) : (i += 1) {
+                        if (numbers.items[i].idx == num_idx) {
+                            break;
+                        }
+                    } else {
+                        try numbers.append(.{
+                            .idx = num_idx,
+                            .value = self.board.grid.getEntryAtIdx(num_idx).value.Number,
+                            .groups = ArrayList(usize).init(allocator),
+                        });
+                    }
+                    try numbers.items[i].groups.append(grp_idx);
+                }
             }
+            try groups.items[grp_idx].append(cell_idx);
         }
+
+        self.computed_state.numbers = numbers.toOwnedSlice();
 
         const groups_slice = try allocator.alloc([]const usize, groups.items.len);
         errdefer allocator.free(groups_slice);
@@ -1019,8 +1071,8 @@ const Solver = struct {
 
     // TODO: Remove this function - instead use findGroupsMatrix().
     fn reduceToGroups(self: *Self) !void {
-        const cs = &self.computed_state.?;
-        const matrix = cs.matrix;
+        const cs = &self.computed_state;
+        const matrix = cs.matrix.?;
 
         var groups = ArrayList([]const usize).init(allocator);
         defer groups.deinit();
@@ -1032,18 +1084,18 @@ const Solver = struct {
         defer keep_col_idxs.deinit();
 
         // Allocate memory for two columns, which will be used to compare columns.
-        const column1 = try allocator.alloc(isize, cs.matrix.ySize());
+        const column1 = try allocator.alloc(isize, matrix.ySize());
         defer allocator.free(column1);
-        const column2 = try allocator.alloc(isize, cs.matrix.ySize());
+        const column2 = try allocator.alloc(isize, matrix.ySize());
         defer allocator.free(column2);
 
         // Iterate over columns to find groups.
         var x1: usize = 0;
-        while (x1 < cs.matrix.xSize() - 1) : (x1 += 1) {
+        while (x1 < matrix.xSize() - 1) : (x1 += 1) {
             // If already included in a group, skip over this column.
             if (std.mem.indexOfScalar(usize, remove_col_idxs.items, x1)) |_| continue;
 
-            cs.matrix.getColumnIntoSlice(x1, column1);
+            matrix.getColumnIntoSlice(x1, column1);
 
             // If the column is all zero then just drop it and don't include in
             // a group - this corresponds to outer group with unknown number of
@@ -1060,8 +1112,8 @@ const Solver = struct {
             try keep_col_idxs.append(x1);
 
             var x2: usize = x1 + 1;
-            while (x2 < cs.matrix.xSize() - 1) : (x2 += 1) {
-                cs.matrix.getColumnIntoSlice(x2, column2);
+            while (x2 < matrix.xSize() - 1) : (x2 += 1) {
+                matrix.getColumnIntoSlice(x2, column2);
                 if (std.mem.eql(isize, column1, column2)) {
                     try remove_col_idxs.append(x2);
                     try group.append(x2);
@@ -1071,12 +1123,12 @@ const Solver = struct {
             try groups.append(group.toOwnedSlice());
         }
         // Keep the RHS column.
-        try keep_col_idxs.append(cs.matrix.xSize() - 1);
+        try keep_col_idxs.append(matrix.xSize() - 1);
 
         cs.groups = groups.toOwnedSlice();
-        const old_matrix = cs.matrix; // TODO: Unclear if this tmp var is needed
+        const old_matrix = &matrix; // TODO: Unclear if this tmp var is needed
         defer old_matrix.deinit();
-        cs.matrix = try cs.matrix.selectColumns(keep_col_idxs.items);
+        cs.matrix = try matrix.selectColumns(keep_col_idxs.items);
     }
 
     /// Returns a slice containing valid mine configurations, which are
@@ -1113,20 +1165,21 @@ const Solver = struct {
         //   |  1  0  1 |             |  4 |
         //
 
-        const cs = self.computed_state.?;
+        const matrix = self.computed_state.matrix.?;
+        const groups = self.computed_state.groups.?;
 
         // Check for inconsistent matrix - row with all-zero LHS, non-zero RHS
         // (last row in RREF with zero-rows removed).
         {
-            const last_row = cs.matrix.grid.data[cs.matrix.ySize() - 1];
-            if (std.mem.allEqual(isize, last_row[0 .. cs.matrix.xSize() - 1], 0) and
-                last_row[cs.matrix.xSize() - 1] != 0)
+            const last_row = matrix.grid.data[matrix.ySize() - 1];
+            if (std.mem.allEqual(isize, last_row[0 .. matrix.xSize() - 1], 0) and
+                last_row[matrix.xSize() - 1] != 0)
             {
                 return error.InvalidMatrixEquations;
             }
         }
 
-        const rhs_vec = try cs.matrix.selectColumns(&[_]usize{cs.matrix.xSize() - 1});
+        const rhs_vec = try matrix.selectColumns(&[_]usize{matrix.xSize() - 1});
         const col_categorisation = try self.categoriseColumns();
         const fixed_col_idxs = col_categorisation.fixed;
         const free_col_idxs = col_categorisation.free;
@@ -1139,7 +1192,7 @@ const Solver = struct {
         defer configs.deinit();
 
         if (free_col_idxs.len == 0) {
-            const config = try allocator.alloc(u16, cs.groups.len);
+            const config = try allocator.alloc(u16, groups.len);
             for (config) |*val, i| {
                 if (rhs_vec.getCell(0, i) < 0) return error.InvalidMatrixEquations;
                 val.* = @intCast(u16, rhs_vec.getCell(0, i));
@@ -1149,7 +1202,7 @@ const Solver = struct {
             return configs.toOwnedSlice();
         }
 
-        const free_var_matrix = try cs.matrix.selectColumns(free_col_idxs);
+        const free_var_matrix = try matrix.selectColumns(free_col_idxs);
 
         const max_free_vals = try self.findMaxFreeVals(free_var_matrix, rhs_vec, free_col_idxs);
         defer allocator.free(max_free_vals);
@@ -1176,7 +1229,7 @@ const Solver = struct {
             var invalid_var_idx: ?usize = null;
             for (fixed_vals) |cell, idx| {
                 if (cell < 0 or
-                    cell > cs.groups[fixed_col_idxs[idx]].len * self.per_cell)
+                    cell > groups[fixed_col_idxs[idx]].len * self.per_cell)
                 {
                     invalid_var_idx = idx;
                     break;
@@ -1190,7 +1243,7 @@ const Solver = struct {
                 continue;
             }
 
-            var config = try allocator.alloc(u16, cs.groups.len);
+            var config = try allocator.alloc(u16, groups.len);
             errdefer allocator.free(config);
 
             for (fixed_col_idxs) |grp_idx, fixed_col_idx| {
@@ -1214,8 +1267,8 @@ const Solver = struct {
     }
 
     fn calcProbabilities(self: Self) !Grid(f64) {
-        const groups = self.computed_state.?.groups;
-        const configs = self.computed_state.?.configs;
+        const groups = self.computed_state.groups.?;
+        const configs = self.computed_state.configs.?;
 
         std.log.debug("Calculating config probs...", .{});
         const cfg_probs = try allocator.alloc(f64, configs.len);
@@ -1289,7 +1342,7 @@ const Solver = struct {
     const ColumnCategorisation = struct { fixed: []const usize, free: []const usize };
 
     fn categoriseColumns(self: Self) !ColumnCategorisation {
-        const matrix = self.computed_state.?.matrix;
+        const matrix = self.computed_state.matrix.?;
 
         var fixed_cols = ArrayList(usize).init(allocator);
         defer fixed_cols.deinit();
@@ -1329,7 +1382,7 @@ const Solver = struct {
         assert(free_var_matrix.xSize() == free_col_idxs.len);
         assert(rhs_vec.xSize() == 1);
 
-        const groups = self.computed_state.?.groups;
+        const groups = self.computed_state.groups.?;
 
         const max_free_vals = try allocator.alloc(u16, free_var_matrix.xSize());
         for (max_free_vals) |*val, i| {
@@ -1594,6 +1647,14 @@ pub fn main() !u8 {
         );
 
         const groups = try solver.findGroups();
+        const cs = &solver.computed_state;
+
+        std.log.info("", .{});
+
+        std.log.info("Solver numbers:", .{});
+        for (cs.numbers.?) |num, i| {
+            std.log.info("{d}: {{.idx = {d}, .value = {d}}}", .{ i, num.idx, num.value });
+        }
 
         std.log.info("", .{});
 
@@ -1603,18 +1664,17 @@ pub fn main() !u8 {
         }
 
         try solver.prepare();
-        const cs = &solver.computed_state.?;
 
         std.log.info("", .{});
         std.log.info(
             "Solver matrix:\n{s}",
-            .{try cs.matrix.toStr(.{ .sep_idx = cs.matrix.xSize() - 1 })},
+            .{try cs.matrix.?.toStr(.{ .sep_idx = cs.matrix.?.xSize() - 1 })},
         );
 
         std.log.info("", .{});
 
         std.log.info("Solver groups:", .{});
-        for (cs.groups) |grp, i| {
+        for (cs.groups.?) |grp, i| {
             std.log.info("{d}: {d}", .{ i, grp });
         }
     }
@@ -1624,7 +1684,7 @@ pub fn main() !u8 {
     if (args.debug) {
         std.log.info("", .{});
         std.log.info("Mine configurations:", .{});
-        for (solver.computed_state.?.configs) |cfg, i| {
+        for (solver.computed_state.configs.?) |cfg, i| {
             std.log.info("{d}: {d}", .{ i, cfg });
         }
     }
@@ -1733,7 +1793,7 @@ test "Solver: invalid board" {
     );
     defer board.deinit();
 
-    var solver = Solver.init(board, .{.Num=1}, 1);
+    var solver = Solver.init(board, .{ .Num = 1 }, 1);
     defer solver.deinit();
 
     try std.testing.expectError(error.InvalidMatrixEquations, solver.solve());
