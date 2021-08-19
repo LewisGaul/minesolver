@@ -830,7 +830,7 @@ const Solver = struct {
         matrix: ?Matrix = null,
         /// Each inner slice contains indexes to grid positions.
         groups: ?[]const []const usize = null,
-        /// TODO
+        /// Numbers displayed on the board, corresponding to rows in the matrix.
         numbers: ?[]const Number = null,
         /// Each inner slice contains a number of mines for each group.
         configs: ?[]const []const u16 = null,
@@ -838,7 +838,7 @@ const Solver = struct {
         const Number = struct {
             idx: usize,
             value: u8,
-            // effective_value: u8,  TODO
+            effective_value: u8,
             groups: ArrayList(usize),
         };
     };
@@ -1001,7 +1001,7 @@ const Solver = struct {
                 row[i] = 1;
             }
             // Add the final column value - the RHS of the equation.
-            row[row.len - 1] = num.value; // TODO: should use num.effective_value
+            row[row.len - 1] = num.effective_value;
         }
         // Add the final row on the end, corresponding to the total number of mines.
         if (self.mines == .Num) {
@@ -1086,9 +1086,25 @@ const Solver = struct {
                             break;
                         }
                     } else {
+                        const num_entry = self.board.grid.getEntryAtIdx(num_idx);
+                        const value = num_entry.value.Number;
+                        // Count the neighbouring mines.
+                        var mines: u16 = 0;
+                        // Note: reusing nbrs_buf - be careful that this is valid!
+                        const num_nbrs = self.board.grid.getNeighbours(
+                            num_entry.x,
+                            num_entry.y,
+                            &nbrs_buf,
+                        );
+                        for (num_nbrs) |num_nbr_entry| {
+                            if (num_nbr_entry.value == .Mine)
+                                mines += num_nbr_entry.value.Mine;
+                        }
+                        if (mines > value) return error.InvalidBoard;
                         try numbers.append(.{
                             .idx = num_idx,
-                            .value = self.board.grid.getEntryAtIdx(num_idx).value.Number,
+                            .value = value,
+                            .effective_value = value - @intCast(u8, mines),
                             .groups = ArrayList(usize).init(allocator),
                         });
                     }
@@ -1631,7 +1647,8 @@ pub fn main() !u8 {
         const grp_matrix = try solver.findGroupsMatrix();
 
         std.log.info("", .{});
-        std.log.info("Solver groups matrix:\n{s}",
+        std.log.info(
+            "Solver groups matrix:\n{s}",
             .{try grp_matrix.toStr(.{ .sep_idx = grp_matrix.xSize() - 1 })},
         );
 
