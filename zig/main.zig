@@ -225,13 +225,13 @@ const Args = struct {
 };
 
 const CellContents = union(enum) {
-    // Unclicked cell.
+    /// Unclicked cell.
     Unclicked,
-    // Revealed space (effectively number 0).
+    /// Revealed space (effectively number 0).
     Space,
-    // Revealed number (1, 2, 3, ...).
+    /// Revealed number (1, 2, 3, ...).
     Number: u8,
-    // Mine or flag (1, 2, 3, ...).
+    /// Mine or flag (1, 2, 3, ...).
     Mine: u8,
 
     pub fn format(
@@ -506,8 +506,11 @@ const Matrix = struct {
 
     /// Return a new matrix containing selected columns from the current matrix.
     pub fn selectColumns(self: Self, col_idxs: []const usize) error{OutOfMemory}!Self {
-        // TODO: Free memory on error.
         const rows = try allocator.alloc([]isize, self.ySize());
+        errdefer {
+            for (rows) |row| allocator.free(row);
+            allocator.free(rows);
+        }
         for (rows) |*row, y| {
             row.* = try allocator.alloc(isize, col_idxs.len);
             for (row.*) |*cell, x| {
@@ -995,10 +998,10 @@ const Solver = struct {
         const num_columns = groups.len + 1;
         const num_rows = numbers.len + @as(usize, if (self.mines == .Num) 1 else 0);
         const all_cells = try allocator.alloc(isize, num_columns * num_rows);
-        errdefer allocator.free(all_cells);
+        defer allocator.free(all_cells);
         for (all_cells) |*cell| cell.* = 0;
         const rows = try allocator.alloc([]isize, num_rows);
-        errdefer allocator.free(rows);
+        defer allocator.free(rows);
         for (rows) |*row, j| row.* = all_cells[j * num_columns .. (j + 1) * num_columns];
 
         // Iterate over numbers, creating a matrix row for each.
@@ -1187,19 +1190,24 @@ const Solver = struct {
         }
 
         const rhs_vec = try matrix.selectColumns(&[_]usize{matrix.xSize() - 1});
+        defer rhs_vec.deinit();
         const col_categorisation = try self.categoriseColumns();
         const fixed_col_idxs = col_categorisation.fixed;
+        defer allocator.free(fixed_col_idxs);
         const free_col_idxs = col_categorisation.free;
+        defer allocator.free(free_col_idxs);
         std.log.info(
             "Categorised columns: {d} fixed, {d} free",
             .{ fixed_col_idxs.len, free_col_idxs.len },
         );
 
         var configs = ArrayList([]u16).init(allocator);
+        errdefer for (configs.items) |cfg| allocator.free(cfg);
         defer configs.deinit();
 
         if (free_col_idxs.len == 0) {
             const config = try allocator.alloc(u16, groups.len);
+            errdefer allocator.free(config);
             for (config) |*val, i| {
                 if (rhs_vec.getCell(0, i) < 0) return error.InvalidMatrixEquations;
                 val.* = @intCast(u16, rhs_vec.getCell(0, i));
