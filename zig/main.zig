@@ -1066,6 +1066,8 @@ const Solver = struct {
             for (numbers.items) |n| n.groups.deinit();
             numbers.deinit();
         }
+        var outer_group = ArrayList(usize).init(allocator);
+        defer outer_group.deinit();
 
         var nbrs_buf: [8]Grid(CellContents).Entry = undefined;
         var num_nbr_idxs_buf: [8]usize = undefined;
@@ -1085,8 +1087,13 @@ const Solver = struct {
             }
             const num_nbr_idxs = num_nbr_idxs_buf[0..num_nbr_idxs_idx];
 
-            // Don't include outer group if using mine density.
-            if (num_nbr_idxs.len == 0 and self.mines == .Density) continue;
+            // Special-case the outer group.
+            if (num_nbr_idxs.len == 0) {
+                if (self.mines == .Num) {
+                    try outer_group.append(cell_idx);
+                }
+                continue;
+            }
 
             // Check whether this combination of numbers has already been found.
             var grp_idx: usize = 0;
@@ -1136,11 +1143,18 @@ const Solver = struct {
 
         self.computed_state.numbers = numbers.toOwnedSlice();
 
-        const groups_slice = try allocator.alloc([]const usize, groups.items.len);
+        const groups_slice = try allocator.alloc(
+            []const usize,
+            groups.items.len + @as(usize, if (self.mines == .Num) 1 else 0),
+        );
         errdefer allocator.free(groups_slice);
         for (groups.items) |*grp, i| {
             groups_slice[i] = grp.toOwnedSlice();
         }
+        // This makes the outer group always come at the end.
+        if (self.mines == .Num)
+            groups_slice[groups_slice.len - 1] = outer_group.toOwnedSlice();
+
         return groups_slice;
     }
 
@@ -1307,7 +1321,6 @@ const Solver = struct {
                 }
             }
             cfg_probs[idx] = std.math.exp(log_combs);
-            assert(cfg_probs[idx] > 0);
         }
 
         var weight: f64 = 0;
@@ -1318,6 +1331,7 @@ const Solver = struct {
             p.* = p.* / weight;
             std.log.debug("Prob for config {d}: {d:.4}", .{ i, p.* });
             assert(p.* <= 1.0001);
+            assert(p.* >= 0);
         }
 
         const x_size = self.board.xSize();
