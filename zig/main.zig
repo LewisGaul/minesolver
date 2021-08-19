@@ -838,6 +838,7 @@ const Solver = struct {
         const Number = struct {
             idx: usize,
             value: u8,
+            // effective_value: u8,  TODO
             groups: ArrayList(usize),
         };
     };
@@ -873,6 +874,7 @@ const Solver = struct {
 
         if (self.computed_state.matrix) |matrix| {
             matrix.deinit();
+            self.computed_state.matrix = null;
         }
 
         if (self.computed_state.configs) |configs| {
@@ -901,10 +903,8 @@ const Solver = struct {
     pub fn prepare(self: *Self) !void {
         std.log.info("Preparing solver with {d} x {d} board", .{ self.board.xSize(), self.board.ySize() });
         const cs = &self.computed_state;
-        cs.matrix = try self.findFullMatrix();
+        cs.matrix = try self.findGroupsMatrix();
         std.log.info("Initial matrix is {d} x {d}", .{ cs.matrix.?.xSize(), cs.matrix.?.ySize() });
-        try self.reduceToGroups();
-        std.log.info("Reduced matrix to groups, {d} columns", .{cs.matrix.?.xSize()});
         cs.matrix.?.rref();
         std.log.info("Reduced matrix to RREF", .{});
         cs.matrix.?.removeTrailingZeroRows();
@@ -979,10 +979,46 @@ const Solver = struct {
     /// Convert a board into a set of simultaneous equations for equivalence
     /// groups, represented in matrix form. The memory is owned by the caller.
     pub fn findGroupsMatrix(self: *Self) !Matrix {
-        self.computed_state.groups = try findGroups();
-        // TODO:
-        // - [in findGroups()] Store found numbers and the neighbouring groups
-        // - Iterate over numbers, creating a matrix row for each
+        if (self.computed_state.groups == null) {
+            self.computed_state.groups = try self.findGroups();
+        }
+        const groups = self.computed_state.groups.?;
+        const numbers = self.computed_state.numbers.?;
+
+        const num_columns = groups.len + 1;
+        const num_rows = numbers.len + @as(usize, if (self.mines == .Num) 1 else 0);
+        const all_cells = try allocator.alloc(isize, num_columns * num_rows);
+        errdefer allocator.free(all_cells);
+        for (all_cells) |*cell| cell.* = 0;
+
+        const rows = try allocator.alloc([]isize, num_rows);
+        errdefer allocator.free(rows);
+        // Iterate over numbers, creating a matrix row for each.
+        for (numbers) |num, j| {
+            const row = all_cells[j * num_columns .. (j + 1) * num_columns];
+            rows[j] = row;
+            for (num.groups.items) |i| {
+                row[i] = 1;
+            }
+            // Add the final column value - the RHS of the equation.
+            row[row.len - 1] = num.value; // TODO: should use num.effective_value
+        }
+        // Add the final row on the end, corresponding to the total number of mines.
+        if (self.mines == .Num) {
+            assert(rows.len == numbers.len + 1);
+            const j = rows.len - 1;
+            var i: usize = 0;
+            const row = all_cells[j * num_columns ..];
+            rows[j] = row;
+            while (i < num_columns - 1) : (i += 1) {
+                row[i] = 1;
+            }
+            row[i] = self.mines.Num;
+        }
+
+        // TODO: Get contiguous block of memory working (double frees...)
+        // return Matrix{ .grid = .{ .data = rows } };
+        return Matrix.fromFlatSlice(isize, num_columns, num_rows, all_cells);
     }
 
     pub fn findGroups(self: *Self) ![]const []const usize {
@@ -993,7 +1029,10 @@ const Solver = struct {
         //    - If it has, associate this cell with the corresponding group ID
         //    - Otherwise create a new group and associate this cell with it
         // Should end up with:
-        //  - An array of groups (where elements correspond to board cell positions)
+        //  - An array of groups (where elements correspond to board cell
+        //    positions)
+        //  - An array of numbers (where elements contain the cell index, the
+        //    number value and a list of group indices)
 
         var groups = ArrayList(ArrayList(usize)).init(allocator);
         defer {
@@ -1067,68 +1106,6 @@ const Solver = struct {
             groups_slice[i] = grp.toOwnedSlice();
         }
         return groups_slice;
-    }
-
-    // TODO: Remove this function - instead use findGroupsMatrix().
-    fn reduceToGroups(self: *Self) !void {
-        const cs = &self.computed_state;
-        const matrix = cs.matrix.?;
-
-        var groups = ArrayList([]const usize).init(allocator);
-        defer groups.deinit();
-
-        // Indexes of columns to keep and remove.
-        var remove_col_idxs = ArrayList(usize).init(allocator);
-        defer remove_col_idxs.deinit();
-        var keep_col_idxs = ArrayList(usize).init(allocator);
-        defer keep_col_idxs.deinit();
-
-        // Allocate memory for two columns, which will be used to compare columns.
-        const column1 = try allocator.alloc(isize, matrix.ySize());
-        defer allocator.free(column1);
-        const column2 = try allocator.alloc(isize, matrix.ySize());
-        defer allocator.free(column2);
-
-        // Iterate over columns to find groups.
-        var x1: usize = 0;
-        while (x1 < matrix.xSize() - 1) : (x1 += 1) {
-            // If already included in a group, skip over this column.
-            if (std.mem.indexOfScalar(usize, remove_col_idxs.items, x1)) |_| continue;
-
-            matrix.getColumnIntoSlice(x1, column1);
-
-            // If the column is all zero then just drop it and don't include in
-            // a group - this corresponds to outer group with unknown number of
-            // mines.
-            if (std.mem.allEqual(isize, column1, 0)) {
-                assert(self.mines == .Density);
-                try remove_col_idxs.append(x1);
-                continue;
-            }
-
-            var group = ArrayList(usize).init(allocator);
-            defer group.deinit();
-            try group.append(x1);
-            try keep_col_idxs.append(x1);
-
-            var x2: usize = x1 + 1;
-            while (x2 < matrix.xSize() - 1) : (x2 += 1) {
-                matrix.getColumnIntoSlice(x2, column2);
-                if (std.mem.eql(isize, column1, column2)) {
-                    try remove_col_idxs.append(x2);
-                    try group.append(x2);
-                }
-            }
-            std.log.debug("Found group {d}: {d}", .{ groups.items.len, group.items });
-            try groups.append(group.toOwnedSlice());
-        }
-        // Keep the RHS column.
-        try keep_col_idxs.append(matrix.xSize() - 1);
-
-        cs.groups = groups.toOwnedSlice();
-        const old_matrix = &matrix; // TODO: Unclear if this tmp var is needed
-        defer old_matrix.deinit();
-        cs.matrix = try matrix.selectColumns(keep_col_idxs.items);
     }
 
     /// Returns a slice containing valid mine configurations, which are
@@ -1310,15 +1287,6 @@ const Solver = struct {
             }
         }
 
-        // TODO: Shouldn't need this...
-        var unclicked_cell_probs = ArrayList(*f64).init(allocator);
-        defer unclicked_cell_probs.deinit();
-        var iter = self.board.grid.iterator();
-        while (iter.next()) |entry| {
-            if (entry.value == .Unclicked)
-                try unclicked_cell_probs.append(&probs_grid.data[entry.y][entry.x]);
-        }
-
         std.log.debug("Calculating group probs from config probs...", .{});
         for (groups) |grp_i, i| {
             var unsafe_prob: f64 = 0;
@@ -1330,7 +1298,8 @@ const Solver = struct {
             // TODO: Add in some rounding to ensure no higher than 1!
             assert(unsafe_prob <= 1.0001);
             for (grp_i) |cell_idx| {
-                unclicked_cell_probs.items[cell_idx].* = unsafe_prob;
+                const entry = probs_grid.getEntryAtIdx(cell_idx);
+                probs_grid.data[entry.y][entry.x] = unsafe_prob;
             }
         }
 
@@ -1629,54 +1598,50 @@ pub fn main() !u8 {
     defer solver.deinit();
 
     if (args.debug) {
-        std.log.info("", .{});
+        // var matrix = try solver.findFullMatrix();
+        // defer matrix.deinit();
+        // std.log.info("", .{});
+        // std.log.info(
+        //     "Matrix:\n{s}",
+        //     .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
+        // );
 
-        var matrix = try solver.findFullMatrix();
-        defer matrix.deinit();
-        std.log.info(
-            "Matrix:\n{s}",
-            .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
-        );
-
-        std.log.info("", .{});
-
-        matrix.rref();
-        std.log.info(
-            "RREF matrix:\n{s}",
-            .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
-        );
+        // matrix.rref();
+        // std.log.info("", .{});
+        // std.log.info(
+        //     "RREF matrix:\n{s}",
+        //     .{try matrix.toStr(.{ .sep_idx = matrix.xSize() - 1 })},
+        // );
 
         const groups = try solver.findGroups();
         const cs = &solver.computed_state;
 
         std.log.info("", .{});
-
         std.log.info("Solver numbers:", .{});
         for (cs.numbers.?) |num, i| {
             std.log.info("{d}: {{.idx = {d}, .value = {d}}}", .{ i, num.idx, num.value });
         }
 
         std.log.info("", .{});
-
         std.log.info("Solver groups:", .{});
         for (groups) |grp, i| {
             std.log.info("{d}: {d}", .{ i, grp });
         }
 
+        const grp_matrix = try solver.findGroupsMatrix();
+
+        std.log.info("", .{});
+        std.log.info("Solver groups matrix:\n{s}",
+            .{try grp_matrix.toStr(.{ .sep_idx = grp_matrix.xSize() - 1 })},
+        );
+
         try solver.prepare();
 
         std.log.info("", .{});
         std.log.info(
-            "Solver matrix:\n{s}",
+            "Solver final matrix:\n{s}",
             .{try cs.matrix.?.toStr(.{ .sep_idx = cs.matrix.?.xSize() - 1 })},
         );
-
-        std.log.info("", .{});
-
-        std.log.info("Solver groups:", .{});
-        for (cs.groups.?) |grp, i| {
-            std.log.info("{d}: {d}", .{ i, grp });
-        }
     }
 
     const probs = try solver.solve();
