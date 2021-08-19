@@ -827,11 +827,12 @@ const Solver = struct {
     computed_state: ComputedState = .{},
 
     const ComputedState = struct {
-        matrix: ?Matrix = null,
         /// Each inner slice contains indexes to grid positions.
         groups: ?[]const []const usize = null,
         /// Numbers displayed on the board, corresponding to rows in the matrix.
         numbers: ?[]const Number = null,
+        /// Matrix of simultaneous equations corresponding to the board.
+        matrix: ?Matrix = null,
         /// Each inner slice contains a number of mines for each group.
         configs: ?[]const []const u16 = null,
 
@@ -962,15 +963,21 @@ const Solver = struct {
             j += 1;
         }
 
+        // Add the final row on the end, corresponding to the total number of mines.
         if (num_mines) |m| {
             assert(j == num_rows - 1);
-            // Add the final row on the end, corresponding to the total number of mines.
-            var i: usize = 0;
+            var mines: u16 = 0;
+            iter1.idx = 0;
+            while (iter1.next()) |cell_entry| {
+                if (cell_entry.value == .Mine) mines += cell_entry.value.Mine;
+            }
+            if (mines > m) return error.TooManyMinesInBoard;
             const row = all_matrix_cells[j * num_columns .. (j + 1) * num_columns];
+            var i: usize = 0;
             while (i < num_columns - 1) : (i += 1) {
                 row[i] = 1;
             }
-            row[i] = m;
+            row[i] = m - mines;
         }
 
         return Matrix.fromFlatSlice(isize, num_columns, num_rows, all_matrix_cells);
@@ -990,13 +997,13 @@ const Solver = struct {
         const all_cells = try allocator.alloc(isize, num_columns * num_rows);
         errdefer allocator.free(all_cells);
         for (all_cells) |*cell| cell.* = 0;
-
         const rows = try allocator.alloc([]isize, num_rows);
         errdefer allocator.free(rows);
+        for (rows) |*row, j| row.* = all_cells[j * num_columns .. (j + 1) * num_columns];
+
         // Iterate over numbers, creating a matrix row for each.
         for (numbers) |num, j| {
-            const row = all_cells[j * num_columns .. (j + 1) * num_columns];
-            rows[j] = row;
+            const row = rows[j];
             for (num.groups.items) |i| {
                 row[i] = 1;
             }
@@ -1005,15 +1012,22 @@ const Solver = struct {
         }
         // Add the final row on the end, corresponding to the total number of mines.
         if (self.mines == .Num) {
+            const total_mines = self.mines.Num;
             assert(rows.len == numbers.len + 1);
-            const j = rows.len - 1;
+            // Count all mines in the board.
+            var disp_mines: u16 = 0;
+            var iter1 = self.board.grid.iterator();
+            while (iter1.next()) |cell_entry| {
+                if (cell_entry.value == .Mine) disp_mines += cell_entry.value.Mine;
+            }
+            if (disp_mines > total_mines) return error.TooManyMinesInBoard;
+            // Fill in the row.
+            const row = all_cells[(rows.len - 1) * num_columns ..];
             var i: usize = 0;
-            const row = all_cells[j * num_columns ..];
-            rows[j] = row;
             while (i < num_columns - 1) : (i += 1) {
                 row[i] = 1;
             }
-            row[i] = self.mines.Num;
+            row[i] = total_mines - disp_mines;
         }
 
         // TODO: Get contiguous block of memory working (double frees...)
@@ -1100,7 +1114,7 @@ const Solver = struct {
                             if (num_nbr_entry.value == .Mine)
                                 mines += num_nbr_entry.value.Mine;
                         }
-                        if (mines > value) return error.InvalidBoard;
+                        if (mines > value) return error.TooManyMinesAroundNumber;
                         try numbers.append(.{
                             .idx = num_idx,
                             .value = value,
