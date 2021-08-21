@@ -1051,6 +1051,40 @@ const Solver = struct {
         //  - An array of numbers (where elements contain the cell index, the
         //    number value and a list of group indices)
 
+        var nbrs_buf: [8]Grid(CellContents).Entry = undefined;
+
+        // Find the numbers (we want these to be in order).
+        var numbers = ArrayList(ComputedState.Number).init(allocator);
+        defer {
+            for (numbers.items) |n| n.groups.deinit();
+            numbers.deinit();
+        }
+        var iter = self.board.grid.iterator();
+        while (iter.next()) |entry| {
+            if (entry.value == .Number) {
+                const value = entry.value.Number;
+                // Count the neighbouring mines.
+                var mines: u16 = 0;
+                const num_nbrs = self.board.grid.getNeighbours(
+                    entry.x,
+                    entry.y,
+                    &nbrs_buf,
+                );
+                for (num_nbrs) |num_nbr_entry| {
+                    if (num_nbr_entry.value == .Mine)
+                        mines += num_nbr_entry.value.Mine;
+                }
+                if (mines > value) return error.TooManyMinesAroundNumber;
+                try numbers.append(.{
+                    .idx = iter.idx - 1,
+                    .value = value,
+                    .effective_value = value - @intCast(u8, mines),
+                    .groups = ArrayList(usize).init(allocator),
+                });
+            }
+        }
+
+        // Now construct the groups.
         var groups = ArrayList(ArrayList(usize)).init(allocator);
         defer {
             for (groups.items) |g| g.deinit();
@@ -1061,15 +1095,9 @@ const Solver = struct {
             for (group_num_idxs.items) |g| allocator.free(g);
             group_num_idxs.deinit();
         }
-        var numbers = ArrayList(ComputedState.Number).init(allocator);
-        defer {
-            for (numbers.items) |n| n.groups.deinit();
-            numbers.deinit();
-        }
         var outer_group = ArrayList(usize).init(allocator);
         defer outer_group.deinit();
 
-        var nbrs_buf: [8]Grid(CellContents).Entry = undefined;
         var num_nbr_idxs_buf: [8]usize = undefined;
         var cell_idx: usize = 0;
         while (cell_idx < self.board.xSize() * self.board.ySize()) : (cell_idx += 1) {
@@ -1110,32 +1138,10 @@ const Solver = struct {
                     var i: usize = 0;
                     while (i < numbers.items.len) : (i += 1) {
                         if (numbers.items[i].idx == num_idx) {
+                            try numbers.items[i].groups.append(grp_idx);
                             break;
                         }
-                    } else {
-                        const num_entry = self.board.grid.getEntryAtIdx(num_idx);
-                        const value = num_entry.value.Number;
-                        // Count the neighbouring mines.
-                        var mines: u16 = 0;
-                        // Note: reusing nbrs_buf - be careful that this is valid!
-                        const num_nbrs = self.board.grid.getNeighbours(
-                            num_entry.x,
-                            num_entry.y,
-                            &nbrs_buf,
-                        );
-                        for (num_nbrs) |num_nbr_entry| {
-                            if (num_nbr_entry.value == .Mine)
-                                mines += num_nbr_entry.value.Mine;
-                        }
-                        if (mines > value) return error.TooManyMinesAroundNumber;
-                        try numbers.append(.{
-                            .idx = num_idx,
-                            .value = value,
-                            .effective_value = value - @intCast(u8, mines),
-                            .groups = ArrayList(usize).init(allocator),
-                        });
-                    }
-                    try numbers.items[i].groups.append(grp_idx);
+                    } else @panic("Expected all numbers to be initialised");
                 }
             }
             try groups.items[grp_idx].append(cell_idx);
@@ -1268,10 +1274,10 @@ const Solver = struct {
                 }
             }
             if (invalid_var_idx) |idx| {
-                std.log.debug(
-                    "Potential config {d} invalid in fixed var {d}",
-                    .{ iter.idx, idx },
-                );
+                // std.log.debug(
+                //     "Potential config {d} invalid in fixed var {d}",
+                //     .{ iter.idx, idx },
+                // );
                 continue;
             }
 

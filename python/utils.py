@@ -216,7 +216,7 @@ class Grid(Generic[T]):
 
     @property
     def coords(self) -> Iterable[Coord]:
-        return ((x, y) for x in range(self.x_size) for y in range(self.y_size))
+        return ((x, y)  for y in range(self.y_size) for x in range(self.x_size))
 
     @property
     def values(self) -> Iterable[T]:
