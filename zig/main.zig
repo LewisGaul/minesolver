@@ -1274,6 +1274,7 @@ const Solver = struct {
                 }
             }
             if (invalid_var_idx) |idx| {
+                _ = idx;
                 // std.log.debug(
                 //     "Potential config {d} invalid in fixed var {d}",
                 //     .{ iter.idx, idx },
@@ -1470,9 +1471,9 @@ fn parseInputBoard(input: []const u8) !Board {
 
     var rows: u8 = 0;
     var first_line_cols: ?u8 = null;
-    var lines_iter = std.mem.tokenize(input, "\r\n");
+    var lines_iter = std.mem.tokenize(u8, input, "\r\n");
     while (lines_iter.next()) |line| {
-        var cells_iter = std.mem.tokenize(line, " \t");
+        var cells_iter = std.mem.tokenize(u8, line, " \t");
         var cols: u8 = 0;
         while (cells_iter.next()) |cell| {
             try cells_array.append(try parseInputCell(cell));
