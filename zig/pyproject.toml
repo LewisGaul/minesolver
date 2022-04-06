@@ -8,15 +8,12 @@ requires = [
   # "ziglang == 0.8",
 ]
 
-# NOTE: Should be using the 'project' table as per PEP-631, but it's unclear
-#       whether this is supported by setuptools yet...
+# NOTE: Want to move to using the 'project' table as per PEP-621, but waiting
+#       for support in setuptools...
 
 
 # TOOLS
 # =====
-
-# BLACK
-# -----
 [tool.black]
 exclude = '''
 (
@@ -29,10 +26,8 @@ exclude = '''
 '''
 include = '\.pyi?$'
 line-length = 88
-target_version = ['py36']
+target_version = ['py37']
 
-# ISORT
-# -----
 [tool.isort]
 # Make compatible with Black
 force_grid_wrap = 0
