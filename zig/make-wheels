@@ -5,6 +5,7 @@ import itertools
 import logging
 import os
 import pathlib
+import platform
 import shlex
 import shutil
 import subprocess
@@ -16,9 +17,13 @@ from typing import Optional
 THIS_DIR = pathlib.Path(__file__).parent
 
 THIS_PLATFORM = [x for x in ("win", "linux", "darwin") if sys.platform.startswith(x)][0]
+THIS_ARCH = {
+    "amd64": "x86_64",
+    "arm64": "aarch64",
+}.get(platform.machine(), platform.machine())
 
 SUPPORTED_PLATFORMS = ["windows", "linux", "macos"]
-SUPPORTED_ARCHES = ["x86_64", "i386"]
+SUPPORTED_ARCHES = ["x86_64", "i386", "aarch64"]
 
 
 def get_zig_target_name(plat: str, arch: str) -> str:
@@ -37,6 +42,8 @@ def get_wheel_platform_tag(plat: str, arch: str) -> str:
         return "manylinux1_i686"
     elif plat == "macos" and arch == "x86_64":
         return "macosx_10_9_x86_64"
+    elif plat == "macos" and arch == "aarch64":
+        return "macosx_11_0_arm64"
     else:
         raise ValueError(f"Unsupported plat/arch: {plat}, {arch}")
 
@@ -111,7 +118,7 @@ def main(argv):
     parser.add_argument(
         "--arch",
         choices=SUPPORTED_ARCHES,
-        default="x86_64",
+        default=THIS_ARCH,
         help="Architecture to build for",
     )
     parser.add_argument(
