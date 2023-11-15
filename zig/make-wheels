@@ -17,10 +17,11 @@ from typing import Optional
 THIS_DIR = pathlib.Path(__file__).parent
 
 THIS_PLATFORM = [x for x in ("win", "linux", "darwin") if sys.platform.startswith(x)][0]
+_MACHINE_ARCH = platform.machine().lower()
 THIS_ARCH = {
     "amd64": "x86_64",
     "arm64": "aarch64",
-}.get(platform.machine(), platform.machine())
+}.get(_MACHINE_ARCH, _MACHINE_ARCH)
 
 SUPPORTED_PLATFORMS = ["windows", "linux", "macos"]
 SUPPORTED_ARCHES = ["x86_64", "i386", "aarch64"]
