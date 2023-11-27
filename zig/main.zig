@@ -44,25 +44,21 @@ pub fn log(
         const milli_time = @intCast(u64, std.time.milliTimestamp()) - start_milli_time;
         const level_txt = switch (message_level) {
             // zig fmt: off
-            .emerg  => "EMERG",
-            .alert  => "ALERT",
-            .crit   => " CRIT",
             .err    => "ERROR",
             .warn   => " WARN",
-            .notice => " NOTE",
             .info   => " INFO",
             .debug  => "DEBUG",
             // zig fmt: on
         };
         const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
-        const held = std.debug.getStderrMutex().acquire();
-        defer held.release();
+        std.debug.getStderrMutex().lock();
+        defer std.debug.getStderrMutex().unlock();
         nosuspend stderr.print("{d:>2}.{d:0>3} ", .{ milli_time / 1000, milli_time % 1000 }) catch return;
         nosuspend stderr.print("[" ++ level_txt ++ "]" ++ prefix2 ++ format ++ "\n", args) catch return;
     }
 }
 
-var allocator: *Allocator = std.heap.page_allocator;
+var allocator: Allocator = std.heap.page_allocator;
 
 // Have to get these at runtime on Windows.
 var stdout: std.fs.File.Writer = undefined;
@@ -525,11 +521,11 @@ const Matrix = struct {
         defer rows.deinit();
 
         var first_line_cols: ?usize = null;
-        var lines_iter = std.mem.tokenize(input, "\r\n");
+        var lines_iter = std.mem.tokenize(u8, input, "\r\n");
         while (lines_iter.next()) |line| {
             var row = ArrayList(isize).init(allocator);
             defer row.deinit();
-            var cells_iter = std.mem.tokenize(line, " \t");
+            var cells_iter = std.mem.tokenize(u8, line, " \t");
             while (cells_iter.next()) |cell| {
                 const val = try std.fmt.parseInt(isize, cell, 10);
                 try row.append(val);
@@ -1274,6 +1270,7 @@ const Solver = struct {
                 }
             }
             if (invalid_var_idx) |idx| {
+                _ = idx;
                 // std.log.debug(
                 //     "Potential config {d} invalid in fixed var {d}",
                 //     .{ iter.idx, idx },
@@ -1470,9 +1467,9 @@ fn parseInputBoard(input: []const u8) !Board {
 
     var rows: u8 = 0;
     var first_line_cols: ?u8 = null;
-    var lines_iter = std.mem.tokenize(input, "\r\n");
+    var lines_iter = std.mem.tokenize(u8, input, "\r\n");
     while (lines_iter.next()) |line| {
-        var cells_iter = std.mem.tokenize(line, " \t");
+        var cells_iter = std.mem.tokenize(u8, line, " \t");
         var cols: u8 = 0;
         while (cells_iter.next()) |cell| {
             try cells_array.append(try parseInputCell(cell));
@@ -1598,7 +1595,7 @@ pub fn main() !u8 {
     start_milli_time = @intCast(u64, std.time.milliTimestamp());
     // Set up an allocator - no need to free memory as we go.
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    allocator = &gpa.allocator;
+    allocator = gpa.allocator();
 
     stdout = std.io.getStdOut().writer();
     stderr = std.io.getStdErr().writer();
@@ -1613,7 +1610,7 @@ pub fn main() !u8 {
     if (args.debug) {
         internal_log_level = .debug;
     } else if (args.quiet) {
-        internal_log_level = .notice;
+        internal_log_level = .warn;
     }
 
     // Debug log the parsed args.
