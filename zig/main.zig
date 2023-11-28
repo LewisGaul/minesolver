@@ -40,8 +40,8 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (@enumToInt(message_level) <= @enumToInt(internal_log_level)) {
-        const milli_time = @intCast(u64, std.time.milliTimestamp()) - start_milli_time;
+    if (@intFromEnum(message_level) <= @intFromEnum(internal_log_level)) {
+        const milli_time = @as(u64, @intCast(std.time.milliTimestamp())) - start_milli_time;
         const level_txt = switch (message_level) {
             // zig fmt: off
             .err    => "ERROR",
@@ -84,7 +84,7 @@ fn lcm(val1: usize, val2: usize) usize {
     if (val1 % val2 == 0) return val1;
     if (val2 % val1 == 0) return val2;
     // TODO: Dodgy int casts...
-    return @intCast(u16, val1) * @intCast(u16, val2) / gcd(val1, val2);
+    return @as(u16, @intCast(val1)) * @as(u16, @intCast(val2)) / gcd(val1, val2);
 }
 
 fn absDifference(val1: anytype, val2: @TypeOf(val1)) @TypeOf(val1) {
@@ -98,13 +98,13 @@ fn logCombs(s: usize, m: usize, xmax: u8) f64 {
     if (s == 1) return 0;
     if (xmax >= m) {
         // s**m
-        return std.math.ln(@intToFloat(f64, s)) * @intToFloat(f64, m);
+        return @log(@as(f64, @floatFromInt(s))) * @as(f64, @floatFromInt(m));
     } else if (xmax == 1) {
         // Falling factorial s!/m!
         var result: f64 = 0;
         var i: usize = s - m + 1;
         while (i <= s) : (i += 1) {
-            result += std.math.ln(@intToFloat(f64, i));
+            result += @log(@as(f64, @floatFromInt(i)));
         }
         return result;
     } else if (xmax == 2) {
@@ -119,25 +119,25 @@ fn logCombs(s: usize, m: usize, xmax: u8) f64 {
             { // s! / (s - m + d)!
                 var i: usize = s + d - m + 1;
                 while (i <= s) : (i += 1) {
-                    ln_val += std.math.ln(@intToFloat(f64, i));
+                    ln_val += @log(@as(f64, @floatFromInt(i)));
                 }
             }
             { // m! / (m - 2*d)!
                 var i: usize = m - 2 * d + 1;
                 while (i <= m) : (i += 1) {
-                    ln_val += std.math.ln(@intToFloat(f64, i));
+                    ln_val += @log(@as(f64, @floatFromInt(i)));
                 }
             }
             { // 1 / (2**d * d!)
-                ln_val -= std.math.ln(2.0) * @intToFloat(f64, d);
+                ln_val -= @log(2.0) * @as(f64, @floatFromInt(d));
                 var i: usize = 1;
                 while (i <= d) : (i += 1) {
-                    ln_val -= std.math.ln(@intToFloat(f64, i));
+                    ln_val -= @log(@as(f64, @floatFromInt(i)));
                 }
             }
             tot += std.math.exp(ln_val);
         }
-        return std.math.ln(tot);
+        return @log(tot);
     } else if (xmax == 3) {
         // A horrible nested sum expression... see docs.
         // Using floats accepting loss of precision, since the number of
@@ -152,35 +152,35 @@ fn logCombs(s: usize, m: usize, xmax: u8) f64 {
                 { // s! / (s - m + d + 2*t)!
                     var i: usize = s + d + 2 * t - m + 1;
                     while (i <= s) : (i += 1) {
-                        ln_val += std.math.ln(@intToFloat(f64, i));
+                        ln_val += @log(@as(f64, @floatFromInt(i)));
                     }
                 }
                 { // m! / (m - 2*d - 3*t)!
                     var i: usize = m - 2 * d - 3 * t + 1;
                     while (i <= m) : (i += 1) {
-                        ln_val += std.math.ln(@intToFloat(f64, i));
+                        ln_val += @log(@as(f64, @floatFromInt(i)));
                     }
                 }
                 { // 1 / ( (2!)**d * (3!)**t )
-                    ln_val -= std.math.ln(2.0) * @intToFloat(f64, d);
-                    ln_val -= std.math.ln(6.0) * @intToFloat(f64, t);
+                    ln_val -= @log(2.0) * @as(f64, @floatFromInt(d));
+                    ln_val -= @log(6.0) * @as(f64, @floatFromInt(t));
                 }
                 { // 1/d!
                     var i: usize = 1;
                     while (i <= d) : (i += 1) {
-                        ln_val -= std.math.ln(@intToFloat(f64, i));
+                        ln_val -= @log(@as(f64, @floatFromInt(i)));
                     }
                 }
                 { // 1/t!
                     var i: usize = 1;
                     while (i <= t) : (i += 1) {
-                        ln_val -= std.math.ln(@intToFloat(f64, i));
+                        ln_val -= @log(@as(f64, @floatFromInt(i)));
                     }
                 }
                 tot += std.math.exp(ln_val);
             }
         }
-        return std.math.ln(tot);
+        return @log(tot);
     } else {
         @panic("Unable to calculate number of combinations for per_cell > 3");
     }
@@ -192,9 +192,9 @@ fn logCombs(s: usize, m: usize, xmax: u8) f64 {
 fn unsafeProb(s: usize, m: usize, xmax: u8) f64 {
     if (m > s * xmax) return 0;
     if (xmax == 1) {
-        return @intToFloat(f64, m) / @intToFloat(f64, s);
+        return @as(f64, @floatFromInt(m)) / @as(f64, @floatFromInt(s));
     } else if (xmax >= m) {
-        return 1 - std.math.pow(f64, 1 - 1.0 / @intToFloat(f64, s), @intToFloat(f64, m));
+        return 1 - std.math.pow(f64, 1 - 1.0 / @as(f64, @floatFromInt(s)), @as(f64, @floatFromInt(m)));
     } else if (m > xmax * (s - 1)) {
         return 1;
     } else {
@@ -241,12 +241,12 @@ const CellContents = union(enum) {
         switch (self) {
             .Unclicked => try writer.writeByte('#'),
             .Space => try writer.writeByte('.'),
-            .Number => |n| try writer.print("{}", .{n}),
+            .Number => |n| try writer.print("{d}", .{n}),
             .Mine => |n| {
                 if (n == 1) {
                     try writer.writeByte('*');
                 } else {
-                    try writer.print("*{}", .{n});
+                    try writer.print("*{d}", .{n});
                 }
             },
         }
@@ -299,7 +299,7 @@ fn Grid(comptime T: type) type {
             if (cells.len != x_size * y_size or cells.len == 0)
                 return error.InvalidNumberOfCells;
             const rows: [][]T = try allocator.alloc([]T, y_size);
-            for (rows) |*row, y| {
+            for (rows, 0..) |*row, y| {
                 row.* = try allocator.dupe(T, cells[y * x_size .. (y + 1) * x_size]);
             }
             return Self{ .data = rows };
@@ -307,7 +307,7 @@ fn Grid(comptime T: type) type {
 
         pub fn fromOwnedData(data: []const []const T) !Self {
             const new_rows = try allocator.alloc([]T, data.len);
-            for (data) |row, i| {
+            for (data, 0..) |row, i| {
                 new_rows[i] = try allocator.dupe(T, row);
             }
             return Self{ .data = new_rows };
@@ -395,14 +395,14 @@ fn Grid(comptime T: type) type {
             var buf = ArrayList(u8).init(allocator);
             defer buf.deinit();
             var writer = buf.writer();
-            for (g.data) |row, y| {
+            for (g.data, 0..) |row, y| {
                 if (y > 0) try writer.writeByte('\n');
-                for (row) |cell, i| {
+                for (row, 0..) |cell, i| {
                     if (i > 0) try writer.writeByte(' ');
                     if (opts.sep_idx != null and opts.sep_idx.? == i)
                         try writer.print("| ", .{});
                     const cell_width = std.fmt.count(fmt, .{cell});
-                    try writer.writeByteNTimes(' ', @intCast(usize, max_width - cell_width));
+                    try writer.writeByteNTimes(' ', @as(usize, @intCast(max_width - cell_width)));
                     try writer.print(fmt, .{cell});
                 }
             }
@@ -489,9 +489,9 @@ const Matrix = struct {
             return error.InvalidNumberOfCells;
         // TODO: Failing to free memory on error.
         const rows = try allocator.alloc([]isize, y_size);
-        for (rows) |*row, y| {
+        for (rows, 0..) |*row, y| {
             row.* = try allocator.alloc(isize, x_size);
-            for (row.*) |*cell, x| {
+            for (row.*, 0..) |*cell, x| {
                 cell.* = cells[y * x_size + x];
             }
         }
@@ -507,9 +507,9 @@ const Matrix = struct {
             for (rows) |row| allocator.free(row);
             allocator.free(rows);
         }
-        for (rows) |*row, y| {
+        for (rows, 0..) |*row, y| {
             row.* = try allocator.alloc(isize, col_idxs.len);
-            for (row.*) |*cell, x| {
+            for (row.*, 0..) |*cell, x| {
                 cell.* = self.getCell(col_idxs[x], y);
             }
         }
@@ -538,11 +538,11 @@ const Matrix = struct {
             } else if (row.items.len != first_line_cols) {
                 return error.InconsistentGridShape;
             }
-            try rows.append(row.toOwnedSlice());
+            try rows.append(try row.toOwnedSlice());
         }
         if (first_line_cols == null) return error.EmptyInput;
 
-        return Self{ .grid = Grid(isize){ .data = rows.toOwnedSlice() } };
+        return Self{ .grid = Grid(isize){ .data = try rows.toOwnedSlice() } };
     }
 
     pub fn deinit(self: Self) void {
@@ -582,7 +582,7 @@ const Matrix = struct {
     }
 
     pub fn toStr(self: Self, opts: struct { sep_idx: ?usize = null }) ![]const u8 {
-        return self.grid.toStr("{}", .{ .sep_idx = opts.sep_idx });
+        return self.grid.toStr("{any}", .{ .sep_idx = opts.sep_idx });
     }
 
     /// Returns a copy of the matrix - memory owned by the caller.
@@ -593,8 +593,8 @@ const Matrix = struct {
     pub fn matrixAdd(self: Self, other: Self) error{OutOfMemory}!Self {
         assert(self.xSize() == other.xSize() and self.ySize() == other.ySize());
         var new_matrix = try self.copy();
-        for (new_matrix.grid.data) |row, y| {
-            for (row) |*cell, x| {
+        for (new_matrix.grid.data, 0..) |row, y| {
+            for (row, 0..) |*cell, x| {
                 cell.* += other.getCell(x, y);
             }
         }
@@ -604,8 +604,8 @@ const Matrix = struct {
     pub fn matrixSubtract(self: Self, other: Self) error{OutOfMemory}!Self {
         assert(self.xSize() == other.xSize() and self.ySize() == other.ySize());
         var new_matrix = try self.copy();
-        for (new_matrix.grid.data) |row, y| {
-            for (row) |*cell, x| {
+        for (new_matrix.grid.data, 0..) |row, y| {
+            for (row, 0..) |*cell, x| {
                 cell.* -= other.getCell(x, y);
             }
         }
@@ -668,7 +668,7 @@ const Matrix = struct {
                 }
                 const abs_inner_row_val = std.math.absCast(self.getCell(col_idx, inner_row_idx));
 
-                const pivot_val = @intCast(usize, self.getCell(col_idx, row_idx));
+                const pivot_val = @as(usize, @intCast(self.getCell(col_idx, row_idx)));
                 const pivot_lcm = lcm(pivot_val, abs_inner_row_val);
                 const pivot_multiple = pivot_lcm / pivot_val;
                 const inner_multiple = pivot_lcm / abs_inner_row_val;
@@ -696,9 +696,9 @@ const Matrix = struct {
 
     /// Remove all rows following the first row containing only zeros, i.e. all
     /// zero-rows for a matrix in RREF.
-    pub fn removeTrailingZeroRows(self: *Self) void {
+    pub fn removeTrailingZeroRows(self: *Self) !void {
         var zero_row_idx: ?usize = null;
-        for (self.grid.data) |row, y| {
+        for (self.grid.data, 0..) |row, y| {
             if (std.mem.allEqual(isize, row, 0)) {
                 zero_row_idx = y;
                 break;
@@ -709,7 +709,7 @@ const Matrix = struct {
             while (y < self.ySize()) : (y += 1) {
                 allocator.free(self.grid.data[y]);
             }
-            self.grid.data = allocator.shrink(self.grid.data, idx);
+            self.grid.data = try allocator.realloc(self.grid.data, idx);
         }
     }
 
@@ -741,18 +741,18 @@ const Matrix = struct {
         if (factor == 1) return;
         for (self.grid.data[row_idx]) |*cell| {
             // TODO: Dodgy int casts...
-            cell.* = @intCast(i16, cell.*) * @intCast(i16, factor);
+            cell.* = @as(i16, @intCast(cell.*)) * @as(i16, @intCast(factor));
         }
     }
 
     fn addRow(self: *Self, row_idx: usize, add_row_idx: usize) void {
-        for (self.grid.data[row_idx]) |*cell, col_idx| {
+        for (self.grid.data[row_idx], 0..) |*cell, col_idx| {
             cell.* += self.getCell(col_idx, add_row_idx);
         }
     }
 
     fn subtractRow(self: *Self, row_idx: usize, sub_row_idx: usize) void {
-        for (self.grid.data[row_idx]) |*cell, col_idx| {
+        for (self.grid.data[row_idx], 0..) |*cell, col_idx| {
             cell.* -= self.getCell(col_idx, sub_row_idx);
         }
     }
@@ -784,7 +784,7 @@ const Board = struct {
     }
 
     pub fn toStr(self: Self) ![]const u8 {
-        return self.grid.toStr("{}", .{});
+        return self.grid.toStr("{any}", .{});
     }
 };
 
@@ -803,8 +803,8 @@ const RectangularIterator = struct {
         if (self.idx >= self.size()) return null;
         defer self.idx += 1;
         var counter: usize = 1;
-        for (self.max_vals) |val, i| {
-            self.result_slice[i] = @intCast(u16, (self.idx / counter) % (val + 1));
+        for (self.max_vals, 0..) |val, i| {
+            self.result_slice[i] = @as(u16, @intCast((self.idx / counter) % (val + 1)));
             counter *= val + 1;
         }
         return self.result_slice;
@@ -907,7 +907,7 @@ const Solver = struct {
         std.log.info("Initial matrix is {d} x {d}", .{ cs.matrix.?.xSize(), cs.matrix.?.ySize() });
         cs.matrix.?.rref();
         std.log.info("Reduced matrix to RREF", .{});
-        cs.matrix.?.removeTrailingZeroRows();
+        try cs.matrix.?.removeTrailingZeroRows();
         std.log.info("Removed zero-rows from matrix, {d} rows", .{cs.matrix.?.ySize()});
     }
 
@@ -958,7 +958,7 @@ const Solver = struct {
             assert(i == num_columns - 1);
             // Add the final column value - the RHS of the equation.
             if (num_entry.value.Number < nbr_mines) return error.TooManyMinesAroundNumber;
-            row[i] = num_entry.value.Number - @intCast(isize, nbr_mines);
+            row[i] = num_entry.value.Number - @as(isize, @intCast(nbr_mines));
             j += 1;
         }
 
@@ -998,10 +998,10 @@ const Solver = struct {
         for (all_cells) |*cell| cell.* = 0;
         const rows = try allocator.alloc([]isize, num_rows);
         defer allocator.free(rows);
-        for (rows) |*row, j| row.* = all_cells[j * num_columns .. (j + 1) * num_columns];
+        for (rows, 0..) |*row, j| row.* = all_cells[j * num_columns .. (j + 1) * num_columns];
 
         // Iterate over numbers, creating a matrix row for each.
-        for (numbers) |num, j| {
+        for (numbers, 0..) |num, j| {
             const row = rows[j];
             for (num.groups.items) |i| {
                 row[i] = 1;
@@ -1074,7 +1074,7 @@ const Solver = struct {
                 try numbers.append(.{
                     .idx = iter.idx - 1,
                     .value = value,
-                    .effective_value = value - @intCast(u8, mines),
+                    .effective_value = value - @as(u8, @intCast(mines)),
                     .groups = ArrayList(usize).init(allocator),
                 });
             }
@@ -1143,19 +1143,19 @@ const Solver = struct {
             try groups.items[grp_idx].append(cell_idx);
         }
 
-        self.computed_state.numbers = numbers.toOwnedSlice();
+        self.computed_state.numbers = try numbers.toOwnedSlice();
 
         const groups_slice = try allocator.alloc(
             []const usize,
             groups.items.len + @as(usize, if (self.mines == .Num) 1 else 0),
         );
         errdefer allocator.free(groups_slice);
-        for (groups.items) |*grp, i| {
-            groups_slice[i] = grp.toOwnedSlice();
+        for (groups.items, 0..) |*grp, i| {
+            groups_slice[i] = try grp.toOwnedSlice();
         }
         // This makes the outer group always come at the end.
         if (self.mines == .Num)
-            groups_slice[groups_slice.len - 1] = outer_group.toOwnedSlice();
+            groups_slice[groups_slice.len - 1] = try outer_group.toOwnedSlice();
 
         return groups_slice;
     }
@@ -1227,9 +1227,9 @@ const Solver = struct {
         if (free_col_idxs.len == 0) {
             const config = try allocator.alloc(u16, groups.len);
             errdefer allocator.free(config);
-            for (config) |*val, i| {
+            for (config, 0..) |*val, i| {
                 if (rhs_vec.getCell(0, i) < 0) return error.InvalidMatrixEquations;
-                val.* = @intCast(u16, rhs_vec.getCell(0, i));
+                val.* = @as(u16, @intCast(rhs_vec.getCell(0, i)));
             }
             std.log.info("Found a unique solution", .{});
             try configs.append(config);
@@ -1252,16 +1252,16 @@ const Solver = struct {
         defer allocator.free(fixed_vals);
         while (iter.next()) |free_vals| {
             // Fill in 'fixed_vals' by performing matrix multiplication.
-            for (fixed_vals) |*cell, i| {
+            for (fixed_vals, 0..) |*cell, i| {
                 var subtract_val: isize = 0;
-                for (free_var_matrix.getRow(i)) |free_cell, j| {
+                for (free_var_matrix.getRow(i), 0..) |free_cell, j| {
                     subtract_val += free_cell * free_vals[j];
                 }
                 cell.* = rhs_vec.getCell(0, i) - subtract_val;
             }
 
             var invalid_var_idx: ?usize = null;
-            for (fixed_vals) |cell, idx| {
+            for (fixed_vals, 0..) |cell, idx| {
                 if (cell < 0 or
                     cell > groups[fixed_col_idxs[idx]].len * self.per_cell)
                 {
@@ -1281,11 +1281,11 @@ const Solver = struct {
             var config = try allocator.alloc(u16, groups.len);
             errdefer allocator.free(config);
 
-            for (fixed_col_idxs) |grp_idx, fixed_col_idx| {
-                config[grp_idx] = @intCast(u16, fixed_vals[fixed_col_idx]);
+            for (fixed_col_idxs, 0..) |grp_idx, fixed_col_idx| {
+                config[grp_idx] = @as(u16, @intCast(fixed_vals[fixed_col_idx]));
             }
-            for (free_col_idxs) |grp_idx, free_col_idx| {
-                config[grp_idx] = @intCast(u16, free_vals[free_col_idx]);
+            for (free_col_idxs, 0..) |grp_idx, free_col_idx| {
+                config[grp_idx] = @as(u16, @intCast(free_vals[free_col_idx]));
             }
             try configs.append(config);
             std.log.debug(
@@ -1307,18 +1307,18 @@ const Solver = struct {
 
         std.log.debug("Calculating config probs...", .{});
         const cfg_probs = try allocator.alloc(f64, configs.len);
-        for (configs) |cfg, idx| {
+        for (configs, 0..) |cfg, idx| {
             var log_combs: f64 = 0;
-            for (cfg) |m_i, i| {
+            for (cfg, 0..) |m_i, i| {
                 const g_size = groups[i].len;
                 log_combs += logCombs(g_size, m_i, self.per_cell);
                 var k: u16 = 1;
                 while (k <= m_i) : (k += 1) { // Divide by m_i!
-                    log_combs -= std.math.ln(@intToFloat(f64, k));
+                    log_combs -= @log(@as(f64, @floatFromInt(k)));
                 }
                 switch (self.mines) { // Multiply by  ( rho / (1-rho) )^m_i
                     .Density => |rho| {
-                        log_combs += std.math.ln(rho / (1 - rho)) * @intToFloat(f64, m_i);
+                        log_combs += @log(rho / (1 - rho)) * @as(f64, @floatFromInt(m_i));
                     },
                     else => {},
                 }
@@ -1330,7 +1330,7 @@ const Solver = struct {
         for (cfg_probs) |p| weight += p;
         if (weight == std.math.inf(f64)) return error.TooManyCombinations;
         std.log.debug("Adjusting config probs by weight {e:.2}", .{weight});
-        for (cfg_probs) |*p, i| {
+        for (cfg_probs, 0..) |*p, i| {
             p.* = p.* / weight;
             std.log.debug("Prob for config {d}: {d:.4}", .{ i, p.* });
             assert(p.* <= 1.0001);
@@ -1347,9 +1347,9 @@ const Solver = struct {
         }
 
         std.log.debug("Calculating group probs from config probs...", .{});
-        for (groups) |grp_i, i| {
+        for (groups, 0..) |grp_i, i| {
             var unsafe_prob: f64 = 0;
-            for (configs) |cfg_j, j| {
+            for (configs, 0..) |cfg_j, j| {
                 unsafe_prob += cfg_probs[j] * unsafeProb(grp_i.len, cfg_j[i], self.per_cell);
             }
             std.log.debug("Calculated unsafe prob for group {d}: {d:.3}", .{ i, unsafe_prob });
@@ -1395,8 +1395,8 @@ const Solver = struct {
             try free_cols.append(x);
         }
         return ColumnCategorisation{
-            .fixed = fixed_cols.toOwnedSlice(),
-            .free = free_cols.toOwnedSlice(),
+            .fixed = try fixed_cols.toOwnedSlice(),
+            .free = try free_cols.toOwnedSlice(),
         };
     }
 
@@ -1413,8 +1413,8 @@ const Solver = struct {
         const groups = self.computed_state.groups.?;
 
         const max_free_vals = try allocator.alloc(u16, free_var_matrix.xSize());
-        for (max_free_vals) |*val, i| {
-            val.* = @intCast(u16, groups[free_col_idxs[i]].len) * self.per_cell;
+        for (max_free_vals, 0..) |*val, i| {
+            val.* = @as(u16, @intCast(groups[free_col_idxs[i]].len)) * self.per_cell;
             var y: usize = 0;
             while (y < free_var_matrix.ySize()) : (y += 1) {
                 if (rhs_vec.getCell(0, y) < 0) continue;
@@ -1426,8 +1426,8 @@ const Solver = struct {
                 if (unusable_row) continue;
 
                 const bound =
-                    @intCast(u16, rhs_vec.getCell(0, y)) /
-                    @intCast(u16, free_var_matrix.getCell(i, y));
+                    @as(u16, @intCast(rhs_vec.getCell(0, y))) /
+                    @as(u16, @intCast(free_var_matrix.getCell(i, y)));
                 if (bound < val.*) val.* = bound;
             }
         }
@@ -1504,7 +1504,7 @@ fn parseArgs() !Args {
     const params = comptime [_]clap.Param(clap.Help){
         clap.parseParam("-h, --help                    Display this help and exit") catch unreachable,
         clap.parseParam("-f, --file <PATH>             Input file (defaults to stdin)") catch unreachable,
-        clap.parseParam("-m, --mines <MINES>           Number of mines") catch unreachable,
+        clap.parseParam("-m, --mines <NUM>             Number of mines") catch unreachable,
         clap.parseParam("-d, --infinite-density <VAL>  Density of mines on infinite board") catch unreachable,
         clap.parseParam("-p, --per-cell <NUM>          Max number of mines per cell") catch unreachable,
         clap.parseParam("-v, --verbose                 Output debug info and logging to stderr") catch unreachable,
@@ -1513,22 +1513,32 @@ fn parseArgs() !Args {
 
     // Initalize diagnostics for reporting parsing errors.
     var diag = clap.Diagnostic{};
-    var clap_args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag }) catch |err| {
+    const parsers = comptime .{
+        .PATH = clap.parsers.string,
+        .NUM = clap.parsers.int(u8, 10),
+        .VAL = clap.parsers.float(f64),
+    };
+    var parse_result = clap.parse(
+        clap.Help,
+        &params,
+        parsers,
+        .{ .diagnostic = &diag },
+    ) catch |err| {
         diag.report(stderr, err) catch {};
         return err;
     };
-    defer clap_args.deinit();
+    defer parse_result.deinit();
 
-    if (clap_args.flag("--help")) {
-        try stderr.print("{s} ", .{clap_args.exe_arg});
-        try clap.usage(stderr, &params);
+    if (parse_result.args.help != 0) {
+        try stderr.print("{s} ", .{parse_result.exe_arg});
+        try clap.usage(stderr, clap.Help, &params);
         try stderr.writeByte('\n');
-        try clap.help(stderr, &params);
+        try clap.help(stderr, clap.Help, &params, .{});
         std.process.exit(0);
     }
 
     const input_file = blk: {
-        if (clap_args.option("--file")) |file| {
+        if (parse_result.args.file) |file| {
             break :blk std.fs.cwd().openFile(file, .{}) catch |err| {
                 try stderr.print("Failed to open file {s}\n", .{file});
                 return err;
@@ -1536,29 +1546,21 @@ fn parseArgs() !Args {
         } else break :blk std.io.getStdIn();
     };
 
-    const mines_arg_set = clap_args.option("--mines") != null;
-    const density_arg_set = clap_args.option("--infinite-density") != null;
+    const mines_arg_set = parse_result.args.mines != null;
+    const density_arg_set = parse_result.args.@"infinite-density" != null;
     if (mines_arg_set and density_arg_set or !mines_arg_set and !density_arg_set) {
         try stderr.writeAll("Exactly one of '--mines' and '--infinite-density' args expected\n");
         return error.InvalidArgument;
     }
 
     const mines: MinesInfo = blk: {
-        if (clap_args.option("--mines")) |num_mines_str| {
-            const num_mines = std.fmt.parseUnsigned(u16, num_mines_str, 10) catch |err| {
-                try stderr.writeAll("Expected positive integer number of mines\n");
-                return err;
-            };
+        if (parse_result.args.mines) |num_mines| {
             if (num_mines == 0) {
                 try stderr.writeAll("Expected positive integer number of mines\n");
                 return error.InvalidArgument;
             }
             break :blk .{ .Num = num_mines };
-        } else if (clap_args.option("--infinite-density")) |density_str| {
-            const density = std.fmt.parseFloat(f64, density_str) catch |err| {
-                try stderr.writeAll("Expected mines density between 0 and 1\n");
-                return err;
-            };
+        } else if (parse_result.args.@"infinite-density") |density| {
             if (density <= 0 or density >= 1) {
                 try stderr.writeAll("Expected mines density between 0 and 1\n");
                 return error.InvalidArgument;
@@ -1569,18 +1571,18 @@ fn parseArgs() !Args {
 
     var args = Args{ .input_file = input_file, .mines = mines };
 
-    if (clap_args.option("--per-cell")) |per_cell| {
-        args.per_cell = try std.fmt.parseUnsigned(u8, per_cell, 10);
-        if (args.per_cell == 0) {
+    if (parse_result.args.@"per-cell") |per_cell| {
+        if (per_cell == 0) {
             try stderr.writeAll("Max number of mines per cell must be greater than 0\n");
             return error.InvalidArgument;
         }
+        args.per_cell = per_cell;
     }
 
-    if (clap_args.flag("--verbose")) {
+    if (parse_result.args.verbose != 0) {
         args.debug = true;
     }
-    if (clap_args.flag("--quiet")) {
+    if (parse_result.args.quiet != 0) {
         args.quiet = true;
     }
     if (args.quiet and args.debug) {
@@ -1592,7 +1594,7 @@ fn parseArgs() !Args {
 }
 
 pub fn main() !u8 {
-    start_milli_time = @intCast(u64, std.time.milliTimestamp());
+    start_milli_time = @as(u64, @intCast(std.time.milliTimestamp()));
     // Set up an allocator - no need to free memory as we go.
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     allocator = gpa.allocator();
@@ -1677,13 +1679,13 @@ pub fn main() !u8 {
 
         std.log.info("", .{});
         std.log.info("Solver numbers:", .{});
-        for (cs.numbers.?) |num, i| {
+        for (cs.numbers.?, 0..) |num, i| {
             std.log.info("{d}: {{.idx = {d}, .value = {d}}}", .{ i, num.idx, num.value });
         }
 
         std.log.info("", .{});
         std.log.info("Solver groups:", .{});
-        for (groups) |grp, i| {
+        for (groups, 0..) |grp, i| {
             std.log.info("{d}: {d}", .{ i, grp });
         }
 
@@ -1709,7 +1711,7 @@ pub fn main() !u8 {
     if (args.debug) {
         std.log.info("", .{});
         std.log.info("Mine configurations:", .{});
-        for (solver.computed_state.configs.?) |cfg, i| {
+        for (solver.computed_state.configs.?, 0..) |cfg, i| {
             std.log.info("{d}: {d}", .{ i, cfg });
         }
     }
@@ -1776,7 +1778,7 @@ test "Matrix remove trailing zero rows" {
     );
     defer matrix.deinit();
 
-    matrix.removeTrailingZeroRows();
+    try matrix.removeTrailingZeroRows();
 
     const mat_str = try matrix.toStr(.{});
     defer allocator.free(mat_str);
