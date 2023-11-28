@@ -216,6 +216,7 @@ const Args = struct {
     input_file: File,
     mines: MinesInfo,
     per_cell: u8 = 1,
+    reach: u8 = 8,
     debug: bool = false,
     quiet: bool = false,
 };
@@ -419,53 +420,50 @@ fn Grid(comptime T: type) type {
         }
 
         /// Stores the result in the provided buffer.
-        pub fn getNeighbours(g: Self, x: usize, y: usize, buf: *[8]Entry) []const Entry {
-            var x_min: usize = x;
-            var x_max: usize = x;
-            var y_min: usize = y;
-            var y_max: usize = y;
-            if (x > 0) x_min -= 1;
-            if (x < g.xSize() - 1) x_max += 1;
-            if (y > 0) y_min -= 1;
-            if (y < g.ySize() - 1) y_max += 1;
-
-            var i: usize = x_min;
+        pub fn getNeighbours(
+            g: Self,
+            x: usize,
+            y: usize,
+            reach: u8,
+            buf: []Entry,
+        ) []const Entry {
+            assert(buf.len >= reach);
             var nbr_idx: usize = 0;
-            while (i <= x_max) : (i += 1) {
-                var j: usize = y_min;
-                while (j <= y_max) : (j += 1) {
-                    if (i == x and j == y) continue;
-                    buf[nbr_idx] = .{ .x = i, .y = j, .value = g.getCell(i, j) };
+            if (reach == 4) {
+                if (x > 0) {
+                    buf[nbr_idx] = .{ .x = x - 1, .y = y, .value = g.getCell(x - 1, y) };
                     nbr_idx += 1;
+                }
+                if (y > 0) {
+                    buf[nbr_idx] = .{ .x = x, .y = y - 1, .value = g.getCell(x, y - 1) };
+                    nbr_idx += 1;
+                }
+                if (x < g.xSize() - 1) {
+                    buf[nbr_idx] = .{ .x = x + 1, .y = y, .value = g.getCell(x + 1, y) };
+                    nbr_idx += 1;
+                }
+                if (y < g.ySize() - 1) {
+                    buf[nbr_idx] = .{ .x = x, .y = y + 1, .value = g.getCell(x, y + 1) };
+                    nbr_idx += 1;
+                }
+            } else {
+                assert(reach == 8 or reach == 24);
+                const step: usize = if (reach == 8) 1 else 2;
+                const x_min: usize = if (x >= step) x - step else 0;
+                const x_max: usize = if (x < g.xSize() - step) x + step else g.xSize() - 1;
+                const y_min: usize = if (y >= step) y - step else 0;
+                const y_max: usize = if (y < g.ySize() - step) y + step else g.ySize() - 1;
+                var i: usize = x_min;
+                while (i <= x_max) : (i += 1) {
+                    var j: usize = y_min;
+                    while (j <= y_max) : (j += 1) {
+                        if (i == x and j == y) continue;
+                        buf[nbr_idx] = .{ .x = i, .y = j, .value = g.getCell(i, j) };
+                        nbr_idx += 1;
+                    }
                 }
             }
             return buf[0..nbr_idx];
-        }
-
-        /// Allocates the slice - memory owned by the caller.
-        pub fn getNeighboursAlloc(g: Self, x: usize, y: usize) error{OutOfMemory}![]const Entry {
-            var x_min: usize = x;
-            var x_max: usize = x;
-            var y_min: usize = y;
-            var y_max: usize = y;
-            if (x > 0) x_min -= 1;
-            if (x < g.xSize() - 1) x_max += 1;
-            if (y > 0) y_min -= 1;
-            if (y < g.ySize() - 1) y_max += 1;
-            const num_nbrs = (x_max - x_min + 1) * (y_max - y_min + 1) - 1;
-            var nbrs = ArrayList(Entry).init(allocator);
-            try nbrs.ensureTotalCapacity(num_nbrs);
-            var i: usize = x_min;
-            while (i <= x_max) : (i += 1) {
-                var j: usize = y_min;
-                while (j <= y_max) : (j += 1) {
-                    if (i == x and j == y) continue;
-                    nbrs.appendAssumeCapacity(
-                        Entry{ .x = i, .y = j, .value = g.getCell(i, j) },
-                    );
-                }
-            }
-            return nbrs.toOwnedSlice();
         }
     };
 }
@@ -823,6 +821,7 @@ const Solver = struct {
     board: Board,
     mines: MinesInfo,
     per_cell: u8,
+    reach: u8,
     computed_state: ComputedState = .{},
 
     const ComputedState = struct {
@@ -847,11 +846,12 @@ const Solver = struct {
 
     /// The board is still owned by the caller and should be independently
     /// deinitialised.
-    pub fn init(board: Board, mines_info: MinesInfo, per_cell: u8) Self {
+    pub fn init(board: Board, mines_info: MinesInfo, per_cell: u8, reach: u8) Self {
         return Self{
             .board = board,
             .mines = mines_info,
             .per_cell = per_cell,
+            .reach = reach,
         };
     }
 
@@ -1047,7 +1047,9 @@ const Solver = struct {
         //  - An array of numbers (where elements contain the cell index, the
         //    number value and a list of group indices)
 
-        var nbrs_buf: [8]Grid(CellContents).Entry = undefined;
+        // Use array of size 24 since this is the largest supported reach value.
+        assert(self.reach <= 24);
+        var nbrs_buf: [24]Grid(CellContents).Entry = undefined;
 
         // Find the numbers (we want these to be in order).
         var numbers = ArrayList(ComputedState.Number).init(allocator);
@@ -1064,6 +1066,7 @@ const Solver = struct {
                 const num_nbrs = self.board.grid.getNeighbours(
                     entry.x,
                     entry.y,
+                    self.reach,
                     &nbrs_buf,
                 );
                 for (num_nbrs) |num_nbr_entry| {
@@ -1094,14 +1097,19 @@ const Solver = struct {
         var outer_group = ArrayList(usize).init(allocator);
         defer outer_group.deinit();
 
-        var num_nbr_idxs_buf: [8]usize = undefined;
+        var num_nbr_idxs_buf: [24]usize = undefined;
         var cell_idx: usize = 0;
         while (cell_idx < self.board.xSize() * self.board.ySize()) : (cell_idx += 1) {
             const entry = self.board.grid.getEntryAtIdx(cell_idx);
             if (entry.value != .Unclicked) continue;
 
             // Create a slice of indices of number neighbours.
-            const nbrs = self.board.grid.getNeighbours(entry.x, entry.y, &nbrs_buf);
+            const nbrs = self.board.grid.getNeighbours(
+                entry.x,
+                entry.y,
+                self.reach,
+                &nbrs_buf,
+            );
             var num_nbr_idxs_idx: usize = 0;
             for (nbrs) |nbr| {
                 if (nbr.value == .Number) {
@@ -1507,6 +1515,7 @@ fn parseArgs() !Args {
         clap.parseParam("-m, --mines <NUM>             Number of mines") catch unreachable,
         clap.parseParam("-d, --infinite-density <VAL>  Density of mines on infinite board") catch unreachable,
         clap.parseParam("-p, --per-cell <NUM>          Max number of mines per cell") catch unreachable,
+        clap.parseParam("-r, --reach <NUM>             How many neighbour cells the numbers reach") catch unreachable,
         clap.parseParam("-v, --verbose                 Output debug info and logging to stderr") catch unreachable,
         clap.parseParam("-q, --quiet                   Emit less output to stderr") catch unreachable,
     };
@@ -1579,6 +1588,14 @@ fn parseArgs() !Args {
         args.per_cell = per_cell;
     }
 
+    if (parse_result.args.reach) |reach| {
+        if (!(reach == 4 or reach == 8 or reach == 24)) {
+            try stderr.writeAll("Expected reach value to be one of 4, 8 or 24\n");
+            return error.InvalidArgument;
+        }
+        args.reach = reach;
+    }
+
     if (parse_result.args.verbose != 0) {
         args.debug = true;
     }
@@ -1619,12 +1636,12 @@ pub fn main() !u8 {
     const verbosity = if (args.debug) "verbose" else if (args.quiet) "quiet" else "default";
     switch (args.mines) {
         .Num => |num_mines| std.log.debug(
-            "Parsed args: mines={d}, per_cell={d}, verbosity={s}",
-            .{ num_mines, args.per_cell, verbosity },
+            "Parsed args: mines={d}, per_cell={d}, reach={d}, verbosity={s}",
+            .{ num_mines, args.per_cell, args.reach, verbosity },
         ),
         .Density => |density| std.log.debug(
-            "Parsed args: density={d}, per_cell={d}, verbosity={s}",
-            .{ density, args.per_cell, verbosity },
+            "Parsed args: density={d}, per_cell={d}, reach={d}, verbosity={s}",
+            .{ density, args.per_cell, args.reach, verbosity },
         ),
     }
 
@@ -1655,7 +1672,7 @@ pub fn main() !u8 {
     defer board.deinit();
     try stdout.print("Board:\n{s}\n", .{try board.toStr()});
 
-    var solver = Solver.init(board, args.mines, args.per_cell);
+    var solver = Solver.init(board, args.mines, args.per_cell, args.reach);
     defer solver.deinit();
 
     if (args.debug) {
@@ -1820,7 +1837,7 @@ test "Solver: invalid board" {
     );
     defer board.deinit();
 
-    var solver = Solver.init(board, .{ .Num = 1 }, 1);
+    var solver = Solver.init(board, .{ .Num = 1 }, 1, 4);
     defer solver.deinit();
 
     try std.testing.expectError(error.InvalidMatrixEquations, solver.solve());
