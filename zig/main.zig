@@ -1153,16 +1153,17 @@ const Solver = struct {
 
         self.computed_state.numbers = try numbers.toOwnedSlice();
 
+        const include_outer_group = (self.mines == .Num and outer_group.items.len > 0);
         const groups_slice = try allocator.alloc(
             []const usize,
-            groups.items.len + @as(usize, if (self.mines == .Num) 1 else 0),
+            groups.items.len + @as(usize, if (include_outer_group) 1 else 0),
         );
         errdefer allocator.free(groups_slice);
         for (groups.items, 0..) |*grp, i| {
             groups_slice[i] = try grp.toOwnedSlice();
         }
         // This makes the outer group always come at the end.
-        if (self.mines == .Num)
+        if (include_outer_group)
             groups_slice[groups_slice.len - 1] = try outer_group.toOwnedSlice();
 
         return groups_slice;
@@ -1319,6 +1320,9 @@ const Solver = struct {
             var log_combs: f64 = 0;
             for (cfg, 0..) |m_i, i| {
                 const g_size = groups[i].len;
+                // TODO: Is this a bug?!!
+                //       I think we should be adding up the actual combinations,
+                //       not the log of the combinations...
                 log_combs += logCombs(g_size, m_i, self.per_cell);
                 var k: u16 = 1;
                 while (k <= m_i) : (k += 1) { // Divide by m_i!
