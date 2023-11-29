@@ -14,6 +14,7 @@ def get_board_probs(
     mines: Optional[int] = None,
     density: Optional[float] = None,
     per_cell: int = 1,
+    reach: int = 8,
 ) -> List[List[float]]:
     """
     Get probabilities for a minesweeper board.
@@ -30,7 +31,7 @@ def get_board_probs(
 
     Either a number of mines or a density of mines must be given.
     """
-    cmd = [str(THIS_DIR / "zig-main"), "--per-cell", str(per_cell)]
+    cmd = [str(THIS_DIR / "zig-main"), "--per-cell", str(per_cell), "--reach", str(reach)]
     if mines is not None:
         cmd += ["--mines", str(mines)]
     if density is not None:
